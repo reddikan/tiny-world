@@ -1,0 +1,7 @@
+{
+  "location": "auto",
+  "geo": "US",
+  "quality": "pi",
+  "controls": false,
+  "port": 8080
+}

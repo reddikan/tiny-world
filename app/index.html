@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tiny World</title>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0a0f18; color: #eef2f7; font-family: 'Rubik', system-ui, sans-serif; }
+  body { overflow: hidden; }
+  #stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; background: #1c6c84; overflow: hidden; }
+  #map { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; display: block; cursor: pointer; }
+  #panel { position: absolute; left: 24px; top: 24px; width: 340px; height: 672px; padding: 20px; border-radius: 18px; background: rgba(14,20,32,0.9); display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; justify-content: space-between; align-items: center; }
+  .cap { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #b4bfd0; }
+  .live { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #8fe3a8; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: #8fe3a8; display: block; }
+  #clock { font-size: 38px; line-height: 42px; font-weight: 700; white-space: nowrap; }
+  #date { font-size: 14px; color: #b4bfd0; }
+  .blocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .blk { background: rgba(255,255,255,0.08); border-radius: 10px; padding: 7px 10px; }
+  .blk span { display: block; font-size: 12px; color: #b4bfd0; }
+  .blk b { display: block; font-size: 18px; font-weight: 700; white-space: nowrap; }
+  #sub { font-size: 12px; color: #b4bfd0; }
+  .rule { border-top: 1px solid rgba(255,255,255,0.16); padding-top: 10px; }
+  #feed { display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; overflow: hidden; min-height: 0; }
+  .th { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+  .meta { font-size: 12px; color: #ffcf66; overflow-wrap: anywhere; }
+  .meta.major { color: #ff9c8f; }
+  .meta.minor { color: #b4bfd0; }
+  .tx { font-size: 14px; line-height: 19px; font-weight: 500; }
+  .tx.minor { font-weight: 400; color: #d5dce8; }
+  .q { display: flex; gap: 8px; margin-left: 4px; }
+  .av { width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #141822; }
+  .bub { background: rgba(255,255,255,0.1); border-radius: 4px 10px 10px 10px; padding: 5px 9px; font-size: 13px; line-height: 18px; }
+  #foot { font-size: 12px; color: #b4bfd0; line-height: 17px; }
+  #ctl { position: absolute; right: 16px; bottom: 14px; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; max-width: 860px; padding: 8px 10px; border-radius: 12px; background: rgba(14,20,32,0.88); font-size: 12px; }
+  #ctl .lab { color: #b4bfd0; margin-right: 2px; }
+  button { font: inherit; font-size: 12px; font-weight: 500; color: #eef2f7; background: rgba(255,255,255,0.12); border: 0; border-radius: 8px; padding: 7px 10px; min-height: 30px; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,0.2); }
+  button.on { background: #ffcf66; color: #1a1408; }
+  button:focus-visible { outline: 2px solid #ffcf66; outline-offset: 2px; }
+  #card { position: absolute; right: 16px; top: 16px; width: 300px; padding: 14px 16px; border-radius: 14px; background: rgba(14,20,32,0.94); font-size: 13px; line-height: 19px; display: none; }
+  #card h2 { margin: 0 0 2px; font-size: 17px; }
+  #card .dim { color: #b4bfd0; }
+  #card .say { margin-top: 8px; background: rgba(255,255,255,0.1); border-radius: 4px 10px 10px 10px; padding: 6px 10px; }
+  #card button { position: absolute; right: 10px; top: 10px; padding: 4px 9px; min-height: 26px; }
+  #note { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 12px 18px; border-radius: 12px; background: rgba(14,20,32,0.92); font-size: 15px; display: none; }
+  body.tall { overflow: auto; }
+  body.tall #stage { position: static; width: 100%; height: auto; transform: none !important; background: #0a0f18; overflow: visible; }
+  body.tall #map { position: static; width: 100%; height: auto; aspect-ratio: 16 / 9; }
+  body.tall #panel { position: static; width: auto; height: auto; margin: 10px; border-radius: 14px; }
+  body.tall #feed { overflow: visible; }
+  body.tall #ctl { position: static; margin: 10px; max-width: none; justify-content: flex-start; }
+  body.tall #card { position: static; width: auto; margin: 10px; }
+  body.tall #note { position: fixed; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="map" width="1920" height="1080" aria-label="Live map of the tiny world. Each dot is one citizen."></canvas>
+  <div id="panel">
+    <div class="row"><div class="cap">TINY WORLD</div><div class="live"><i></i><span id="mode">Live</span></div></div>
+    <div><div id="clock">--:--</div><div id="date">&nbsp;</div></div>
+    <div class="blocks">
+      <div class="blk"><span>Temperature</span><b id="b-temp">--</b></div>
+      <div class="blk"><span>Sky</span><b id="b-sky">--</b></div>
+      <div class="blk"><span>Season</span><b id="b-season">--</b></div>
+      <div class="blk"><span>Citizens</span><b id="b-pop">--</b></div>
+    </div>
+    <div id="sub">&nbsp;</div>
+    <div class="row rule"><div class="cap">WORLD FEED</div></div>
+    <div id="feed" aria-live="off"></div>
+    <div id="foot" class="rule">&nbsp;</div>
+  </div>
+  <div id="card"><button id="card-x" aria-label="Close">Close</button><div id="card-body"></div></div>
+  <div id="ctl">
+    <span class="lab">Preview controls</span>
+    <button data-speed="1" class="on">Real time</button>
+    <button data-speed="60">60x</button>
+    <button data-speed="600">600x</button>
+    <button data-speed="3600">3600x</button>
+    <button id="c-pull">Pull trends now</button>
+    <button id="c-season">Next season</button>
+    <button id="c-wx">Weather: auto</button>
+    <button id="c-new">New world</button>
+  </div>
+  <div id="note"></div>
+</div>
+<script src="data.js"></script>
+<script src="mesh.js"></script>
+<script src="text.js"></script>
+<script src="sim.js"></script>
+<script src="render.js"></script>
+<script src="host.js"></script>
+<script>
+(function () {
+  'use strict';
+  const Sim = window.TW_SIM, R = window.TW_RENDER, $ = (id) => document.getElementById(id);
+  const KEY = 'tinyworld.v3'; let speed = 1, last = performance.now(), lastUi = 0, lastSave = performance.now(), lastFeed = -1, armed = 0;
+  const stage = $('stage'), canvas = $('map');
+  function layout() {
+    const tall = window.innerWidth < window.innerHeight * 1.15; document.body.classList.toggle('tall', tall);
+    if (tall) { stage.style.transform = ''; stage.style.left = stage.style.top = ''; return; }
+    const s = Math.min(window.innerWidth / 1280, window.innerHeight / 720); stage.style.transform = 'scale(' + s + ')';
+    stage.style.left = Math.max(0, (window.innerWidth - 1280 * s) / 2) + 'px'; stage.style.top = Math.max(0, (window.innerHeight - 720 * s) / 2) + 'px';
+  }
+  window.addEventListener('resize', layout); layout();
+  function store(v) { try { if (v === undefined) return localStorage.getItem(KEY); if (v === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, v); } catch (e) { } return null; }
+  function note(t) { const n = $('note'); n.textContent = t || ''; n.style.display = t ? 'block' : 'none'; }
+
+  const Host = window.TW_HOST; let fps = 60, lastDraw = 0, saveEvery = 45000, lastRefresh = -1e9, lastVer = 0;
+  const persist = () => Host.saveState(Sim.save());
+  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 15, tipStride: 3, budget: 26, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
+  Sim.init(window.WORLD_DATA);
+
+  function setSpeed(v) { speed = v; if (v !== 1) Sim.S.realtime = false; else { const s = Sim.S; s.time = Date.now(); s.realtime = true; s.nextPull = Math.min(s.nextPull, s.time + 15 * 60000); if (s.nextPull < s.time) s.nextPull = s.time + 5000; } document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('on', +b.dataset.speed === v)); }
+  document.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => setSpeed(+b.dataset.speed)));
+  $('c-pull').addEventListener('click', () => { Sim.S.nextPull = Sim.S.time; });
+  $('c-season').addEventListener('click', () => { const s = Sim.S; s.time += 91 * 864e5; s.realtime = false; s.nextPull = s.time + 60000; s.dirty++; if (speed === 1) { document.querySelectorAll('[data-speed]').forEach((b) => b.classList.remove('on')); } });
+  const WX = ['auto', 'clear', 'cloudy', 'rain', 'storm', 'snow', 'fog']; let wxi = 0;
+  $('c-wx').addEventListener('click', () => { wxi = (wxi + 1) % WX.length; const s = Sim.S; if (wxi === 0) s.weather.fixed = false; else Sim.setWeather(WX[wxi]); $('c-wx').textContent = 'Weather: ' + WX[wxi]; });
+  $('c-new').addEventListener('click', () => { const b = $('c-new'); if (Date.now() - armed > 4000) { armed = Date.now(); b.textContent = 'Tap again to erase this world'; setTimeout(() => { b.textContent = 'New world'; }, 4000); return; } armed = 0; b.textContent = 'New world'; Host.clearState(); const s = Sim.newWorld((Math.random() * 2 ** 31) | 0, Date.now()); s.realtime = true; lastFeed = -1; setSpeed(1); $('card').style.display = 'none'; });
+  $('card-x').addEventListener('click', () => { $('card').style.display = 'none'; R.sel = null; });
+  canvas.addEventListener('click', (e) => {
+    const r = canvas.getBoundingClientRect(), wx = (e.clientX - r.left) / r.width * 12, wy = (e.clientY - r.top) / r.height * 6.75; const hit = R.pickAt(Sim.S, wx, wy);
+    if (!hit) { $('card').style.display = 'none'; R.sel = null; return; } showCard(hit);
+  });
+  function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  let cardHit = null;
+  function showCard(hit) {
+    cardHit = hit; const b = $('card-body'); b.textContent = ''; const s = Sim.S;
+    if (hit.person) {
+      const p = hit.person; if (!p.alive) { b.appendChild(el('h2', null, p.name)); b.appendChild(el('div', 'dim', 'Has died.')); R.sel = null; $('card').style.display = 'block'; return; }
+      const d = Sim.describe(p); R.sel = p.id;
+      b.appendChild(el('h2', null, d.name));
+      b.appendChild(el('div', 'dim', d.job + ' · age ' + d.age + ' · ' + d.town + (d.leader ? ' (leader)' : '')));
+      b.appendChild(el('div', null, 'Nature: ' + d.traits.join(', ') + '; ' + d.civic));
+      if (d.goal) b.appendChild(el('div', null, 'Wants: ' + d.goal));
+      b.appendChild(el('div', null, 'Feels: ' + d.mood + (d.feels.length ? ', ' + d.feels.join(', ') : '') + (d.sick ? ', sick' : '') + (d.soldier ? ', under arms' : '')));
+      b.appendChild(el('div', null, 'Means: ' + d.wealth + (d.leaderView ? ' · ' + d.leaderView : '')));
+      b.appendChild(el('div', null, (d.partner ? 'Partner: ' + d.partner : 'No partner') + ' · ' + d.kids + (d.kids === 1 ? ' child' : ' children')));
+      b.appendChild(el('div', null, d.friends + (d.friends === 1 ? ' friend' : ' friends') + ' · ' + d.rivals + (d.rivals === 1 ? ' rival' : ' rivals')));
+      b.appendChild(el('div', null, 'Faith: ' + (d.faith || 'none')));
+      if (d.idea) b.appendChild(el('div', 'dim', 'On their mind: "' + d.idea + '"'));
+      if (d.mem.length) b.appendChild(el('div', 'dim', 'Life so far: ' + d.mem.map((m) => m[1] + ' (age ' + m[0] + ')').join('; ')));
+      b.appendChild(el('div', 'say', d.thought));
+    } else {
+      const T = hit.town, L = s.people.find((p) => p.id === T.leader); R.sel = null;
+      b.appendChild(el('h2', null, T.name));
+      b.appendChild(el('div', 'dim', T.pop + ' citizens · ' + T.houses.filter((h) => h.st === 0).length + ' homes · ' + T.fields.filter((f) => f.st === 0).length + ' fields'));
+      b.appendChild(el('div', null, 'Leader: ' + (L ? L.name : 'none')));
+      b.appendChild(el('div', null, 'Main faith: ' + (T.faith != null && s.faiths[T.faith] ? s.faiths[T.faith].name : 'mixed')));
+      b.appendChild(el('div', null, 'Food stores: ' + (T.fpc > 6 ? 'full' : T.fpc > 2.5 ? 'enough' : T.fpc > 1 ? 'low' : 'empty') + ' · mood ' + (T.mood > 0.25 ? 'good' : T.mood > 0 ? 'steady' : 'sour')));
+      const rel = s.towns.filter((o) => o.alive && o !== T && o.pop > 0).map((o) => o.name + ' ' + (T.enemy === o.id ? '(at war)' : (T.trust[o.id] || 0) > 25 ? '(friendly)' : (T.trust[o.id] || 0) < -25 ? '(hostile)' : '(neutral)'));
+      if (rel.length) b.appendChild(el('div', 'dim', rel.join(', ')));
+    }
+    $('card').style.display = 'block';
+  }
+
+  const fmtT = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  function drawFeed(s) {
+    const f = $('feed'); f.textContent = ''; const max = document.body.classList.contains('tall') ? 14 : 9;
+    for (const e of s.feed.slice(0, max)) {
+      const th = el('div', 'th');
+      th.appendChild(el('div', 'meta' + (e.imp >= 3 ? ' major' : e.trend || e.tag ? '' : ' minor'), fmtT(e.t) + (e.tag ? ' · ' + e.tag + (e.trend ? ' · from "' + e.trend + '"' : '') : e.trend ? ' · trending "' + e.trend + '"' : e.imp >= 3 ? ' · major event' : '')));
+      th.appendChild(el('div', 'tx' + (e.imp === 1 ? ' minor' : ''), e.text));
+      for (const q of e.quotes) { const row = el('div', 'q'), av = el('span', 'av', q.n.charAt(0)); av.style.background = q.c; const bub = el('span', 'bub'); bub.appendChild(el('b', null, q.n + ': ')); bub.appendChild(document.createTextNode(q.q)); row.appendChild(av); row.appendChild(bub); th.appendChild(row); }
+      f.appendChild(th);
+    }
+    if (!document.body.classList.contains('tall')) while (f.children.length > 1 && f.scrollHeight > f.clientHeight + 1) f.removeChild(f.lastChild);
+  }
+  function ui(s, catching) {
+    const d = new Date(s.time), se = Sim.season();
+    $('clock').textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    $('date').textContent = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+    $('b-temp').textContent = Sim.temperature() + '°F';
+    $('b-sky').textContent = s.weather.sky.charAt(0).toUpperCase() + s.weather.sky.slice(1);
+    $('b-season').textContent = se.name; $('b-pop').textContent = s.people.length;
+    const towns = s.towns.filter((T) => T.alive && T.pop > 0).length, faiths = s.faiths.filter((f) => f && f.n > 0).length;
+    $('sub').textContent = towns + (towns === 1 ? ' town' : ' towns') + ' · ' + faiths + (faiths === 1 ? ' faith' : ' faiths') + ' · ' + (s.wars.length ? s.wars.length + (s.wars.length === 1 ? ' war' : ' wars') : 'at peace') + ' · ' + s.stats.births + ' born, ' + s.stats.deaths + ' died';
+    $('mode').textContent = catching ? 'Catching up' : s.realtime && speed === 1 ? 'Live' : speed === 1 ? 'Time shifted' : speed + 'x';
+    const left = Math.max(0, Math.round((s.nextPull - s.time) / 1000)), lp = s.lastPull;
+    $('foot').textContent = 'Next search pull in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + (lp ? ' · last pull kept ' + lp.n + ', skipped ' + lp.skipped + ' sports' : '') + (Host.mode === 'pi' ? ' · ' + (lp && lp.live ? 'live Google Trends' : 'saved trends (no live feed yet)') + (Host.weather ? ' · weather for ' + Host.weather.place : ' · weather simulated') : '');
+    if (s.feed.length && s.feed[0].id !== lastFeed) { lastFeed = s.feed[0].id; drawFeed(s); }
+    if (cardHit && $('card').style.display === 'block' && cardHit.person) showCard(cardHit);
+  }
+
+  function tick(now) {
+    const rdt = Math.min(0.25, (now - last) / 1000); last = now; let s = Sim.S;
+    const target = s.realtime && speed === 1 ? Date.now() : s.time + rdt * 1000 * speed; let need = (target - s.time) / 1000;
+    if (need > 21600) { s.time = target - 21600 * 1000; need = 21600; s.nextPull = Math.max(s.nextPull, s.time); }
+    const t0 = performance.now(); while (need > 0.001 && performance.now() - t0 < 22) { const dt = Math.min(30, need); Sim.step(dt); need -= dt; }
+    s = Sim.S; const catching = need > 90; note(R.error ? R.error : catching ? 'Catching up on ' + Math.round(need / 60) + ' minutes the world lived while you were away' : '');
+    if (now - lastDraw >= 1000 / fps - 3) { R.frame(s, Math.min(0.25, (now - lastDraw) / 1000), now); lastDraw = now; }
+    if (now - lastUi > 250) { lastUi = now; ui(s, catching); }
+    if (now - lastSave > saveEvery) { lastSave = now; persist(); }
+    if (Host.mode === 'pi') {
+      if (now - lastRefresh > 300000) { lastRefresh = now; Host.refresh().then(() => { const w = Host.weather; if (w) Sim.setLiveWeather(w.sky, w.temp); else Sim.clearWeather(); }); }
+      if (now - lastVer > 60000) { lastVer = now; Host.changed().then((yes) => { if (yes) { const p = persist(); (p && p.then ? p : Promise.resolve()).then(() => location.reload()); } }); }
+    }
+    requestAnimationFrame(tick);
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) persist(); });
+  note('Painting the world');
+  (async function boot() {
+    await Host.boot();
+    const q = QUALITY[Host.cfg.quality] || QUALITY.full; R.cfg = q; fps = q.fps || 60;
+    if (Host.mode === 'pi') { saveEvery = 120000; if (!Host.cfg.controls) $('ctl').style.display = 'none'; document.body.style.cursor = 'none'; Sim.trendSource = () => Host.trends; document.addEventListener('keydown', (e) => { if (e.key === 'c') { const c = $('ctl'); c.style.display = c.style.display === 'none' ? 'flex' : 'none'; document.body.style.cursor = c.style.display === 'none' ? 'none' : 'auto'; } }); }
+    let S = null; const saved = await Host.loadState();
+    if (saved) { try { S = Sim.load(saved); } catch (e) { S = null; } }
+    if (!S) { S = Sim.newWorld((Math.random() * 2 ** 31) | 0, Date.now()); S.realtime = true; }
+    if (!S.realtime) S.realtime = false;
+    if (Host.mode === 'pi') { S.realtime = true; await Host.refresh(); lastRefresh = performance.now(); const w = Host.weather; if (w) Sim.setLiveWeather(w.sky, w.temp); else Sim.clearWeather(); Host.changed(); }
+    last = performance.now(); R.init(canvas, () => { note(''); requestAnimationFrame(tick); });
+  })();
+})();
+</script>
+</body>
+</html>
