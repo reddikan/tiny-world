@@ -5,9 +5,13 @@ Built for a Raspberry Pi 3 B running Raspberry Pi OS with desktop.
 
 ## Install
 
-1. Put this folder on the Pi (for example in your home folder as `tinyworld`).
-2. Open a terminal in the folder and run:
+1. On the Pi, open Terminal and download Tiny World:
 
+       git clone https://github.com/reddikan/tiny-world.git tinyworld
+
+2. Go into the folder and run the installer:
+
+       cd tinyworld
        bash install.sh
 
 3. Optional: open `config.json` and set your town for real weather, for example
