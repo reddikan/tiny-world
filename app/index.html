@@ -112,7 +112,7 @@
 
   const Host = window.TW_HOST; let fps = 60, lastDraw = 0, saveEvery = 45000, lastRefresh = -1e9, lastVer = 0;
   const persist = () => Host.saveState(Sim.save());
-  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 15, tipStride: 3, budget: 26, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
+  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 30, tipStride: 2, budget: 18, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
   Sim.init(window.WORLD_DATA);
 
   function setSpeed(v) { speed = v; if (v !== 1) Sim.S.realtime = false; else { const s = Sim.S; s.time = Date.now(); s.realtime = true; s.nextPull = Math.min(s.nextPull, s.time + 15 * 60000); if (s.nextPull < s.time) s.nextPull = s.time + 5000; } document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('on', +b.dataset.speed === v)); }
@@ -187,33 +187,49 @@
     if (cardHit && $('card').style.display === 'block' && cardHit.person) showCard(cardHit);
   }
 
-  function tick(now) {
+  let lastTick = 0, lastErrAt = -1e9, errs = 0, booted = false, lastNeed = 0;
+  function fail(e, where) { errs++; const n = performance.now(); if (n - lastErrAt > 60000) { lastErrAt = n; Host.log(new Date().toString() + ' [' + where + '] ' + (e && e.stack ? e.stack : e)); } }
+  Sim.onError = fail;
+  // Move the world forward to the present, save it, and keep trends and weather fresh.
+  function advance(now) {
     const rdt = Math.min(0.25, (now - last) / 1000); last = now; let s = Sim.S;
     const target = s.realtime && speed === 1 ? Date.now() : s.time + rdt * 1000 * speed; let need = (target - s.time) / 1000;
     if (need > 21600) { s.time = target - 21600 * 1000; need = 21600; s.nextPull = Math.max(s.nextPull, s.time); }
     const t0 = performance.now(); while (need > 0.001 && performance.now() - t0 < 22) { const dt = Math.min(30, need); Sim.step(dt); need -= dt; }
-    s = Sim.S; const catching = need > 90; note(R.error ? R.error : catching ? 'Catching up on ' + Math.round(need / 60) + ' minutes the world lived while you were away' : '');
-    if (now - lastDraw >= 1000 / fps - 3) { R.frame(s, Math.min(0.25, (now - lastDraw) / 1000), now); lastDraw = now; }
-    if (now - lastUi > 250) { lastUi = now; ui(s, catching); }
+    lastNeed = need;
     if (now - lastSave > saveEvery) { lastSave = now; persist(); }
     if (Host.mode === 'pi') {
       if (now - lastRefresh > 300000) { lastRefresh = now; Host.refresh().then(() => { const w = Host.weather; if (w) Sim.setLiveWeather(w.sky, w.temp); else Sim.clearWeather(); }); }
       if (now - lastVer > 60000) { lastVer = now; Host.changed().then((yes) => { if (yes) { const p = persist(); (p && p.then ? p : Promise.resolve()).then(() => location.reload()); } }); }
     }
+  }
+  function tick(now) {
+    lastTick = now;
+    try { advance(now); } catch (e) { fail(e, 'world'); }
+    try {
+      const s = Sim.S, catching = lastNeed > 90; note(R.error ? R.error : catching ? 'Catching up on ' + Math.round(lastNeed / 60) + ' minutes the world lived while you were away' : '');
+      if (now - lastDraw >= 1000 / fps - 3) { R.frame(s, Math.min(0.25, (now - lastDraw) / 1000), now); lastDraw = now; }
+      if (now - lastUi > 250) { lastUi = now; ui(s, catching); }
+    } catch (e) { fail(e, 'drawing'); }
     requestAnimationFrame(tick);
   }
+  // If the browser stops drawing (screen asleep, window hidden), the world still lives and saves.
+  setInterval(() => { const now = performance.now(); if (booted && now - lastTick > 3000) { try { advance(now); } catch (e) { fail(e, 'background'); } } }, 2000);
+  setInterval(() => { if (!booted) return; const s = Sim.S, m = performance.memory; Host.ping({ people: s.people.length, towns: s.towns.length, errors: errs, behind: Math.round(lastNeed), drawAgo: Math.round((performance.now() - lastDraw) / 1000), heapMB: m ? Math.round(m.usedJSHeapSize / 1048576) : null, saveKB: null }); }, 30000);
+  window.addEventListener('error', (e) => fail(e.error || e.message, 'page'));
+  window.addEventListener('unhandledrejection', (e) => fail(e.reason, 'promise'));
   document.addEventListener('visibilitychange', () => { if (document.hidden) persist(); });
   note('Painting the world');
   (async function boot() {
     await Host.boot();
-    const q = QUALITY[Host.cfg.quality] || QUALITY.full; R.cfg = q; fps = q.fps || 60;
+    const q = QUALITY[Host.cfg.quality] || QUALITY.full; R.cfg = q; fps = +Host.cfg.fps || q.fps || 60;
     if (Host.mode === 'pi') { saveEvery = 120000; if (!Host.cfg.controls) $('ctl').style.display = 'none'; document.body.style.cursor = 'none'; Sim.trendSource = () => Host.trends; document.addEventListener('keydown', (e) => { if (e.key === 'c') { const c = $('ctl'); c.style.display = c.style.display === 'none' ? 'flex' : 'none'; document.body.style.cursor = c.style.display === 'none' ? 'none' : 'auto'; } }); }
     let S = null; const saved = await Host.loadState();
     if (saved) { try { S = Sim.load(saved); } catch (e) { S = null; } }
     if (!S) { S = Sim.newWorld((Math.random() * 2 ** 31) | 0, Date.now()); S.realtime = true; }
     if (!S.realtime) S.realtime = false;
     if (Host.mode === 'pi') { S.realtime = true; await Host.refresh(); lastRefresh = performance.now(); const w = Host.weather; if (w) Sim.setLiveWeather(w.sky, w.temp); else Sim.clearWeather(); Host.changed(); }
-    last = performance.now(); R.init(canvas, () => { note(''); requestAnimationFrame(tick); });
+    last = performance.now(); R.init(canvas, () => { note(''); booted = true; requestAnimationFrame(tick); });
   })();
 })();
 </script>

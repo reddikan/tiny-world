@@ -13,6 +13,10 @@ if [ -z "$BROWSER" ]; then echo "Chromium is not installed. Run install.sh again
 # stop the "Chromium did not shut down correctly" bubble after a power cut
 PREFS="$HOME/.config/chromium/Default/Preferences"
 [ -f "$PREFS" ] && sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"Crashed"/"exit_type":"Normal"/' "$PREFS"
-exec "$BROWSER" --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
-  --disable-features=Translate --check-for-update-interval=31536000 --password-store=basic \
-  --overscroll-history-navigation=0 "http://localhost:$PORT/"
+while true; do
+  [ -f "$PREFS" ] && sed -i 's/"exited_cleanly":false/"exited_cleanly":true/; s/"exit_type":"Crashed"/"exit_type":"Normal"/' "$PREFS"
+  "$BROWSER" --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble \
+    --disable-features=Translate --check-for-update-interval=31536000 --password-store=basic \
+    --overscroll-history-navigation=0 "http://localhost:$PORT/"
+  sleep 3     # the browser closed or crashed: open it again
+done

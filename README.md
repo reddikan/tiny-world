@@ -36,12 +36,16 @@ The Pi then boots straight into Tiny World.
 | `location` | `"auto"`, a place name like `"Austin, Texas"`, or `"latitude, longitude"` |
 | `geo` | Country for trending searches. `"US"` |
 | `quality` | `"pi"` (light graphics for the Pi 3 B) or `"full"` |
+| `fps` | Optional. Frames per second for the map, for example `"fps": 20`. Leave it out to use the default of 30 |
 | `controls` | `true` shows the preview controls (speed, seasons, weather). Press `c` on a keyboard to toggle them |
 | `port` | Leave at 8080 |
 
 After changing settings: `sudo systemctl restart tinyworld` and press F5 on the screen, or reboot.
 
 ## Handy commands
+
+- If something goes wrong, the record is in `data/errors.log`: `cat ~/tinyworld/data/errors.log`
+- Check the screen is alive and saving: open `http://localhost:8080/api/health`
 
 - See whether the server is running: `systemctl status tinyworld`
 - Check what it is fetching: open `http://localhost:8080/api/trends` and `http://localhost:8080/api/weather` in a browser on the Pi

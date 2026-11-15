@@ -7,6 +7,8 @@ It serves the page to the Pi's own browser and does the things a web page cannot
   /api/weather  real current weather for the configured place (Open-Meteo, no key needed)
   /api/state    the saved world (GET to load, POST to save) kept in data/world.json
   /api/version  changes whenever the code changes, so the screen can reload itself
+  /api/ping     heartbeat from the screen; if it stops, the browser is restarted
+  /api/log      errors from the screen, kept in data/errors.log
 
 Only the Python standard library is used, so nothing needs installing.
 """
@@ -22,6 +24,47 @@ os.makedirs(DATA, exist_ok=True)
 UA = {'User-Agent': 'Mozilla/5.0 (X11; Linux aarch64) TinyWorld/1.0'}
 lock = threading.Lock()
 cache = {}
+LOG = os.path.join(DATA, 'errors.log')
+beat = {'t': None, 'info': {}}
+WATCHDOG_SECS = int(os.environ.get('TW_WATCHDOG_SECS', '300'))
+BROWSER_PATTERN = os.environ.get('TW_BROWSER_PATTERN', 'chromium.*--kiosk')
+
+
+def log(text):
+    try:
+        if os.path.exists(LOG) and os.path.getsize(LOG) > 300000:
+            os.replace(LOG, LOG + '.old')
+        with open(LOG, 'a') as f:
+            f.write(time.strftime('%Y-%m-%d %H:%M:%S ') + text.rstrip() + '\n')
+    except Exception as e:
+        print('log failed:', e, file=sys.stderr)
+
+
+def restart_browser():
+    """The screen stopped answering: close the browser and let the kiosk script open it again."""
+    env = None
+    try:
+        pid = subprocess.run(['pgrep', '-o', '-f', BROWSER_PATTERN], capture_output=True, text=True).stdout.split()
+        if pid:
+            with open('/proc/%s/environ' % pid[0], 'rb') as f:
+                env = dict(kv.split('=', 1) for kv in f.read().decode(errors='ignore').split('\0') if '=' in kv)
+        subprocess.run(['pkill', '-f', BROWSER_PATTERN])
+        time.sleep(12)
+        still = subprocess.run(['pgrep', '-f', BROWSER_PATTERN], capture_output=True, text=True).stdout.split()
+        if not still and env is not None:  # nothing reopened it, so open it ourselves on the same screen
+            subprocess.Popen([os.path.join(ROOT, 'kiosk.sh')], env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        log('watchdog could not restart the browser: %s' % e)
+
+
+def watchdog():
+    while True:
+        time.sleep(20)
+        t = beat['t']
+        if t is not None and time.time() - t > WATCHDOG_SECS:
+            log('watchdog: no heartbeat from the screen for %d seconds (last report %s). Restarting the browser.' % (time.time() - t, json.dumps(beat['info'])))
+            beat['t'] = None
+            restart_browser()
 
 
 def config():
@@ -165,13 +208,15 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         p = self.path.split('?')[0]
         if p == '/api/config':
-            c = config(); return self.send_json({'ok': True, 'quality': c.get('quality', 'pi'), 'controls': bool(c.get('controls')), 'host': 'pi'})
+            c = config(); return self.send_json({'ok': True, 'quality': c.get('quality', 'pi'), 'controls': bool(c.get('controls')), 'fps': c.get('fps'), 'host': 'pi'})
         if p == '/api/trends':
             return self.send_json(cached('trends', 600, fetch_trends))
         if p == '/api/weather':
             return self.send_json(cached('weather', 600, fetch_weather))
         if p == '/api/version':
             return self.send_json({'ok': True, 'version': version()})
+        if p == '/api/health':
+            return self.send_json({'ok': True, 'lastHeartbeatSecondsAgo': None if beat['t'] is None else int(time.time() - beat['t']), 'screen': beat['info'], 'savedSecondsAgo': int(time.time() - os.path.getmtime(STATE)) if os.path.exists(STATE) else None})
         if p == '/api/state':
             try:
                 with open(STATE, 'rb') as f:
@@ -186,9 +231,20 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        if self.path.split('?')[0] != '/api/state':
-            return self.send_json({'ok': False}, 404)
+        p = self.path.split('?')[0]
         n = int(self.headers.get('Content-Length') or 0)
+        if p == '/api/ping':
+            try:
+                beat['info'] = json.loads(self.rfile.read(min(n, 4000)) or b'{}')
+            except Exception:
+                beat['info'] = {}
+            beat['t'] = time.time()
+            return self.send_json({'ok': True})
+        if p == '/api/log':
+            log(self.rfile.read(min(n, 8000)).decode(errors='replace'))
+            return self.send_json({'ok': True})
+        if p != '/api/state':
+            return self.send_json({'ok': False}, 404)
         if n <= 0 or n > 20 * 1024 * 1024:
             return self.send_json({'ok': False, 'error': 'bad size'}, 400)
         body = self.rfile.read(n)
@@ -208,4 +264,6 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == '__main__':
     port = int(config().get('port', 8080))
     print('Tiny World server on http://localhost:%d' % port)
+    log('server started')
+    threading.Thread(target=watchdog, daemon=True).start()
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()

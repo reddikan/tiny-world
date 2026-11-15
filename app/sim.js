@@ -523,7 +523,7 @@
     for (const o of S.towns) if (o !== N) { N.trust[o.id] = o.id === T.id ? 35 : trust(T.id, o.id) * 0.5; o.trust[N.id] = N.trust[o.id]; }
     const go = [lead]; if (lead.partner != null && byId[lead.partner]) go.push(byId[lead.partner]);
     for (const p of S.people) { if (go.length >= 18) break; if (!p.alive || p.home !== T.id || p.age < 16 || go.indexOf(p) >= 0 || p.id === T.leader) continue; const s = rel(p, lead) * 0.8 + p.tr.cur * 0.4 + p.tr.bold * 0.3 - p.age / 120 - p.kids * 0.08 + (T.crowd > 2 ? 0.25 : 0) + noise() * 0.25; if (s > 0.5) { go.push(p); if (p.partner != null && byId[p.partner] && go.indexOf(byId[p.partner]) < 0) go.push(byId[p.partner]); } }
-    if (go.length < 8) { N.alive = false; N.houses = []; return; }
+    if (go.length < 8) { if (S.towns[S.towns.length - 1] === N) { S.towns.pop(); for (const o of S.towns) delete o.trust[N.id]; } else { N.alive = false; N.houses = []; } return; }
     for (const p of S.people) if (p.alive && p.age < 14 && p.par && go.some((g) => g.id === p.par[0] || g.id === p.par[1])) go.push(p);
     for (const p of go) { p.migrate = N.id; if (p.age >= 14 && rnd() < 0.5) p.job = pickJob(N); }
     go[1 % go.length].job = 'builder'; if (go[2]) go[2].job = 'builder';
@@ -668,16 +668,20 @@
   }
 
   // ---------- main step
+  // One citizen or one event going wrong must never stop the whole world: note it and carry on.
+  function report(e, where) { S.errors = (S.errors || 0) + 1; if (Sim.onError) { try { Sim.onError(e, where); } catch (x) { } } }
+  function guard(where, fn) { try { fn(); } catch (e) { report(e, where); } }
   function step(dt) {
     S.time += dt * 1000; S.lifeT += dt; const night = isNight();
-    if (S.time >= S.nextPull) { S.nextPull = S.time + 15 * 60000; if (S.people.length) pull(); }
-    if (S.lifeT >= S.nextWx) { S.nextWx = S.lifeT + 1200; updateWeather(); }
-    if (S.lifeT >= S.nextFast) { S.nextFast = S.lifeT + 10; fastTick(); }
-    if (S.lifeT >= S.nextMonth) { S.nextMonth = S.lifeT + MONTH; if (S.people.length) worldMonth(); }
-    if (S.people.length < 8 && S.lifeT > S.nextShip) settlers();
+    if (S.time >= S.nextPull) { S.nextPull = S.time + 15 * 60000; if (S.people.length) guard('pull', pull); }
+    if (S.lifeT >= S.nextWx) { S.nextWx = S.lifeT + 1200; guard('weather', updateWeather); }
+    if (S.lifeT >= S.nextFast) { S.nextFast = S.lifeT + 10; guard('fast', fastTick); }
+    if (S.lifeT >= S.nextMonth) { S.nextMonth = S.lifeT + MONTH; if (S.people.length) guard('month', worldMonth); }
+    if (S.people.length < 8 && S.lifeT > S.nextShip) guard('settlers', settlers);
     const P = S.people;
     for (let i = 0; i < P.length; i++) {
       const p = P[i]; if (!p.alive) continue;
+      try {
       p.age += dt / YEAR; p.hunger = Math.min(1, p.hunger + dt / 900); p.rest = Math.min(1, p.rest + dt / (night ? 380 : 900)); p.lonely = Math.min(1, p.lonely + dt / 700 * (0.5 + p.tr.soc)); p.spirit = Math.min(1, p.spirit + dt / 1500 * (0.3 + p.tr.dev));
       if (!p.arr) {
         let rem = SPEED * dt * (p.age < 12 ? 0.8 : p.act === 'flee' || p.act === 'raid' ? 1.25 : 1);
@@ -688,6 +692,7 @@
         if (S.lifeT >= p.until) { finish(p); if (p.alive) decide(p); }
       }
       if (S.lifeT >= p.nextM) { p.nextM += MONTH; personMonth(p); }
+      } catch (e) { report(e, 'person ' + p.act); if (p.alive) { p.act = 'idle'; p.path = []; p.arr = true; p.until = S.lifeT + 5 + rnd() * 10; p.ev = null; p.tgt = null; p.sub = null; p.ret = false; p.migrate = null; if (p.nextM < S.lifeT) p.nextM = S.lifeT + MONTH; } }
     }
     if (S.stats.deaths !== S.reaped) { S.reaped = S.stats.deaths; S.people = P.filter((p) => { if (!p.alive) delete byId[p.id]; return p.alive; }); }
   }
