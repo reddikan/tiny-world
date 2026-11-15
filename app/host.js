@@ -30,7 +30,7 @@
   // True when the code on the Pi has changed since this page loaded.
   H.changed = async function () {
     if (H.mode !== 'pi') return false;
-    try { const j = await getJSON('api/version', 5000); if (!j || !j.ok) return false; if (H.version == null) { H.version = j.version; return false; } return j.version !== H.version; } catch (e) { return false; }
+    try { const j = await getJSON('api/version', 5000); if (!j || !j.ok) return false; if (j.updated) H.updated = j.updated * 1000; if (H.version == null) { H.version = j.version; return false; } return j.version !== H.version; } catch (e) { return false; }
   };
   H.log = function (text) { if (H.mode !== 'pi') { try { console.error(text); } catch (e) { } return; } fetch('api/log', { method: 'POST', body: String(text).slice(0, 4000) }).catch(() => { }); };
   H.ping = function (info) { if (H.mode !== 'pi') return; fetch('api/ping', { method: 'POST', body: JSON.stringify(info || {}) }).catch(() => { }); };

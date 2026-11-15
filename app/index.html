@@ -16,6 +16,7 @@
   .cap { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #b4bfd0; }
   .live { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #8fe3a8; }
   .live i { width: 8px; height: 8px; border-radius: 50%; background: #8fe3a8; display: block; }
+  #upd { font-size: 12px; color: #b4bfd0; margin-top: -6px; display: none; }
   #clock { font-size: 38px; line-height: 42px; font-weight: 700; white-space: nowrap; }
   #date { font-size: 14px; color: #b4bfd0; }
   .blocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -62,6 +63,7 @@
   <canvas id="map" width="1920" height="1080" aria-label="Live map of the tiny world. Each dot is one citizen."></canvas>
   <div id="panel">
     <div class="row"><div class="cap">TINY WORLD</div><div class="live"><i></i><span id="mode">Live</span></div></div>
+    <div id="upd"></div>
     <div><div id="clock">--:--</div><div id="date">&nbsp;</div></div>
     <div class="blocks">
       <div class="blk"><span>Temperature</span><b id="b-temp">--</b></div>
@@ -183,10 +185,12 @@
     $('mode').textContent = catching ? 'Catching up' : s.realtime && speed === 1 ? 'Live' : speed === 1 ? 'Time shifted' : speed + 'x';
     const left = Math.max(0, Math.round((s.nextPull - s.time) / 1000)), lp = s.lastPull;
     $('foot').textContent = 'Next search pull in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + (lp ? ' · last pull kept ' + lp.n + ', skipped ' + lp.skipped + ' sports' : '') + (Host.mode === 'pi' ? ' · ' + (lp && lp.live ? 'live Google Trends' : 'saved trends (no live feed yet)') + (Host.weather ? ' · weather for ' + Host.weather.place : ' · weather simulated') : '');
+    if (Host.updated && Host.updated !== shownUpd) { shownUpd = Host.updated; const u = new Date(Host.updated), e = $('upd'); e.textContent = 'Updated ' + u.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' }) + ' ' + u.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(' ', '').toLowerCase(); e.style.display = 'block'; }
     if (s.feed.length && s.feed[0].id !== lastFeed) { lastFeed = s.feed[0].id; drawFeed(s); }
     if (cardHit && $('card').style.display === 'block' && cardHit.person) showCard(cardHit);
   }
 
+  let shownUpd = 0;
   let lastTick = 0, lastErrAt = -1e9, errs = 0, booted = false, lastNeed = 0;
   function fail(e, where) { errs++; const n = performance.now(); if (n - lastErrAt > 60000) { lastErrAt = n; Host.log(new Date().toString() + ' [' + where + '] ' + (e && e.stack ? e.stack : e)); } }
   Sim.onError = fail;
@@ -228,7 +232,7 @@
     if (saved) { try { S = Sim.load(saved); } catch (e) { S = null; } }
     if (!S) { S = Sim.newWorld((Math.random() * 2 ** 31) | 0, Date.now()); S.realtime = true; }
     if (!S.realtime) S.realtime = false;
-    if (Host.mode === 'pi') { S.realtime = true; await Host.refresh(); lastRefresh = performance.now(); const w = Host.weather; if (w) Sim.setLiveWeather(w.sky, w.temp); else Sim.clearWeather(); Host.changed(); }
+    if (Host.mode === 'pi') { S.realtime = true; await Host.refresh(); await Host.changed(); lastRefresh = performance.now(); const w = Host.weather; if (w) Sim.setLiveWeather(w.sky, w.temp); else Sim.clearWeather(); Host.changed(); }
     last = performance.now(); R.init(canvas, () => { note(''); booted = true; requestAnimationFrame(tick); });
   })();
 })();

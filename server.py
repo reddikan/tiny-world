@@ -184,6 +184,21 @@ def version():
     return str(int(newest))
 
 
+def updated():
+    """When the code now on this Pi was last changed: the time of the newest update from GitHub."""
+    try:
+        out = subprocess.run(['git', '-C', ROOT, 'log', '-1', '--format=%ct'], capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip().isdigit():
+            return int(out.stdout.strip())
+    except Exception:
+        pass
+    newest = 0
+    for base, _, files in os.walk(APP):
+        for f in files:
+            newest = max(newest, os.path.getmtime(os.path.join(base, f)))
+    return int(newest)
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=APP, **k)
@@ -214,7 +229,7 @@ class Handler(SimpleHTTPRequestHandler):
         if p == '/api/weather':
             return self.send_json(cached('weather', 600, fetch_weather))
         if p == '/api/version':
-            return self.send_json({'ok': True, 'version': version()})
+            return self.send_json({'ok': True, 'version': version(), 'updated': updated()})
         if p == '/api/health':
             return self.send_json({'ok': True, 'lastHeartbeatSecondsAgo': None if beat['t'] is None else int(time.time() - beat['t']), 'screen': beat['info'], 'savedSecondsAgo': int(time.time() - os.path.getmtime(STATE)) if os.path.exists(STATE) else None})
         if p == '/api/state':
