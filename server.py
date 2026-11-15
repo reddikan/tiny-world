@@ -57,6 +57,20 @@ def restart_browser():
         log('watchdog could not restart the browser: %s' % e)
 
 
+def self_update():
+    """When an update replaces this file, stop; the system starts the new version a few seconds later.
+    This way updates never need an administrator password."""
+    me = os.path.abspath(__file__); born = os.path.getmtime(me)
+    while True:
+        time.sleep(15)
+        try:
+            if os.path.getmtime(me) != born:
+                log('server code was updated; restarting to load it')
+                os._exit(0)
+        except OSError:
+            pass
+
+
 def watchdog():
     while True:
         time.sleep(20)
@@ -281,4 +295,5 @@ if __name__ == '__main__':
     print('Tiny World server on http://localhost:%d' % port)
     log('server started')
     threading.Thread(target=watchdog, daemon=True).start()
+    threading.Thread(target=self_update, daemon=True).start()
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()

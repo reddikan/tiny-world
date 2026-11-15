@@ -6,9 +6,7 @@ git fetch --quiet origin 2>/dev/null || exit 0
 LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse '@{u}' 2>/dev/null) || exit 0
 [ "$LOCAL" = "$REMOTE" ] && exit 0
-OLD=$(git rev-parse HEAD:server.py 2>/dev/null)
 git reset --hard --quiet "$REMOTE"
-NEW=$(git rev-parse HEAD:server.py 2>/dev/null)
-# config.json and the saved world in data/ are not part of the download, so they are untouched
-if [ "$OLD" != "$NEW" ]; then sudo -n systemctl restart tinyworld.service 2>/dev/null; fi
+# config.json and the saved world in data/ are not part of the download, so they are untouched.
+# The server notices when its own file changes and restarts itself; the screen then reloads.
 exit 0
