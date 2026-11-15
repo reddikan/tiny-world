@@ -83,11 +83,20 @@ def watchdog():
 
 def config():
     cfg = {'port': 8080, 'location': 'auto', 'quality': 'pi', 'controls': False, 'geo': 'US'}
-    try:
-        with open(os.path.join(ROOT, 'config.json')) as f:
-            cfg.update(json.load(f))
-    except Exception as e:  # a broken config file should not stop the world
-        print('config.json not read:', e, file=sys.stderr)
+    # settings.json arrives with updates; config.json is this Pi's own and wins, except that
+    # a local "auto" location means "not chosen here", so the shared setting is used.
+    for name in ('settings.json', 'config.json'):
+        try:
+            with open(os.path.join(ROOT, name)) as f:
+                new = json.load(f)
+            if name == 'config.json' and str(new.get('location', 'auto')).strip().lower() in ('', 'auto') and cfg.get('location') != 'auto':
+                new.pop('location', None)
+                new.pop('place', None)
+            cfg.update(new)
+        except FileNotFoundError:
+            pass
+        except Exception as e:  # a broken file should not stop the world
+            print(name, 'not read:', e, file=sys.stderr)
     return cfg
 
 
@@ -151,11 +160,12 @@ WMO = {'clear': (0, 1), 'cloudy': (2, 3), 'fog': (45, 48), 'snow': (71, 73, 75, 
 
 
 def locate():
-    loc = str(config().get('location', 'auto')).strip()
+    cfg = config()
+    loc = str(cfg.get('location', 'auto')).strip()
     if loc.lower() != 'auto' and loc:
         m = re.match(r'^\s*(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)\s*$', loc)
         if m:
-            return float(m.group(1)), float(m.group(3)), loc
+            return float(m.group(1)), float(m.group(3)), str(cfg.get('place') or loc)
         name = loc.split(',')[0].strip()
         j = json.loads(get('https://geocoding-api.open-meteo.com/v1/search?count=5&language=en&name=' + urllib.parse.quote(name)))
         res = j.get('results') or []
@@ -237,7 +247,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         p = self.path.split('?')[0]
         if p == '/api/config':
-            c = config(); return self.send_json({'ok': True, 'quality': c.get('quality', 'pi'), 'controls': bool(c.get('controls')), 'fps': c.get('fps'), 'host': 'pi'})
+            c = config(); return self.send_json({'ok': True, 'quality': c.get('quality', 'pi'), 'controls': bool(c.get('controls')), 'fps': c.get('fps'), 'layers': c.get('layers'), 'host': 'pi'})
         if p == '/api/trends':
             return self.send_json(cached('trends', 600, fetch_trends))
         if p == '/api/weather':

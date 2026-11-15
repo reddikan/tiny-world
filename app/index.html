@@ -10,7 +10,26 @@
   html, body { margin: 0; height: 100%; background: #0a0f18; color: #eef2f7; font-family: 'Rubik', system-ui, sans-serif; }
   body { overflow: hidden; }
   #stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; background: #1c6c84; overflow: hidden; }
-  #map { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; display: block; cursor: pointer; }
+  #view { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; cursor: pointer; transform-origin: 0 0; background: #146ebe; }
+  #view > canvas, #view > div { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; display: block; pointer-events: none; }
+  #lights { mix-blend-mode: screen; opacity: 0; }
+  #flash { background: #dfe8ff; opacity: 0; }
+  #wx, #clouds, #labels { overflow: hidden; }
+  body.pi, body.pi * { cursor: none !important; }
+  .mk { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+  .mk .in { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); white-space: nowrap; text-align: center; }
+  .mk.tl .in { animation: sway 6s ease-in-out infinite; }
+  .mk.em .in { animation: bob 2.4s ease-in-out infinite; font-size: 21px; width: 33px; height: 33px; line-height: 34px; border-radius: 50%; background: rgba(255,255,255,0.94); box-shadow: 1px 3px 0 rgba(8,12,22,0.3); font-family: "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","Twemoji Mozilla",sans-serif; }
+  .mk.em.sm .in { font-size: 16px; width: 26px; height: 26px; line-height: 27px; }
+  .tlb { display: inline-block; padding: 4px 10px 5px; border-radius: 9px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+  .tlb b { display: block; font-size: 13.5px; font-weight: 500; line-height: 17px; }
+  .tlb span { display: block; font-size: 9.5px; font-weight: 500; line-height: 12px; opacity: 0.9; }
+  .tlx { height: 22px; margin-top: 3px; }
+  .tlx i.em { font-style: normal; display: inline-block; font-size: 13px; width: 22px; height: 22px; line-height: 23px; border-radius: 50%; background: rgba(255,255,255,0.94); margin: 0 2px; font-family: "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","Twemoji Mozilla",sans-serif; }
+  .mk.pl .in { background: #ffcf66; color: #1a1408; font-size: 12px; font-weight: 500; padding: 3px 8px; border-radius: 8px; }
+  .mk.pl.red .in { background: rgba(190,24,24,0.95); color: #fff; font-weight: 700; }
+  @keyframes sway { 0%, 100% { transform: translate(-50%, -50%) translate(-2px, 0) rotate(-1.4deg); } 50% { transform: translate(-50%, -50%) translate(2px, -1.5px) rotate(1.4deg); } }
+  @keyframes bob { 0%, 100% { transform: translate(-50%, -50%) translateY(0) scale(1); } 50% { transform: translate(-50%, -50%) translateY(-5px) scale(1.08); } }
   #panel { position: absolute; left: 24px; top: 24px; width: 340px; height: 672px; padding: 20px; border-radius: 18px; background: rgba(14,20,32,0.9); display: flex; flex-direction: column; gap: 10px; }
   .row { display: flex; justify-content: space-between; align-items: center; }
   .cap { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #b4bfd0; }
@@ -50,7 +69,7 @@
   #note { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 12px 18px; border-radius: 12px; background: rgba(14,20,32,0.92); font-size: 15px; display: none; }
   body.tall { overflow: auto; }
   body.tall #stage { position: static; width: 100%; height: auto; transform: none !important; background: #0a0f18; overflow: visible; }
-  body.tall #map { position: static; width: 100%; height: auto; aspect-ratio: 16 / 9; }
+  body.tall #view { position: relative; }
   body.tall #panel { position: static; width: auto; height: auto; margin: 10px; border-radius: 14px; }
   body.tall #feed { overflow: visible; }
   body.tall #ctl { position: static; margin: 10px; max-width: none; justify-content: flex-start; }
@@ -60,7 +79,10 @@
 </head>
 <body>
 <div id="stage">
-  <canvas id="map" width="1920" height="1080" aria-label="Live map of the tiny world. Each dot is one citizen."></canvas>
+  <div id="view" role="img" aria-label="Live map of the tiny world. Each small figure is one citizen.">
+    <canvas id="l-ground"></canvas><canvas id="l-people"></canvas><canvas id="l-top"></canvas><canvas id="l-tips"></canvas>
+    <div id="wash"></div><canvas id="lights"></canvas><div id="clouds"></div><div id="wx"></div><div id="flash"></div><div id="labels"></div>
+  </div>
   <div id="panel">
     <div class="row"><div class="cap">TINY WORLD</div><div class="live"><i></i><span id="mode">Live</span></div></div>
     <div id="upd"></div>
@@ -101,10 +123,11 @@
   'use strict';
   const Sim = window.TW_SIM, R = window.TW_RENDER, $ = (id) => document.getElementById(id);
   const KEY = 'tinyworld.v3'; let speed = 1, last = performance.now(), lastUi = 0, lastSave = performance.now(), lastFeed = -1, armed = 0;
-  const stage = $('stage'), canvas = $('map');
+  const stage = $('stage'), canvas = $('view');
   function layout() {
     const tall = window.innerWidth < window.innerHeight * 1.15; document.body.classList.toggle('tall', tall);
-    if (tall) { stage.style.transform = ''; stage.style.left = stage.style.top = ''; return; }
+    if (tall) { stage.style.transform = ''; stage.style.left = stage.style.top = ''; const v = document.documentElement.clientWidth / 1280; canvas.style.transform = 'scale(' + v + ')'; canvas.style.marginBottom = (720 * v - 720) + 'px'; return; }
+    canvas.style.transform = ''; canvas.style.marginBottom = '';
     const s = Math.min(window.innerWidth / 1280, window.innerHeight / 720); stage.style.transform = 'scale(' + s + ')';
     stage.style.left = Math.max(0, (window.innerWidth - 1280 * s) / 2) + 'px'; stage.style.top = Math.max(0, (window.innerHeight - 720 * s) / 2) + 'px';
   }
@@ -114,7 +137,7 @@
 
   const Host = window.TW_HOST; let fps = 60, lastDraw = 0, saveEvery = 45000, lastRefresh = -1e9, lastVer = 0;
   const persist = () => Host.saveState(Sim.save());
-  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 30, tipStride: 2, budget: 18, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
+  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 30, tipStride: 2, tipEvery: 1, budget: 14, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
   Sim.init(window.WORLD_DATA);
 
   function setSpeed(v) { speed = v; if (v !== 1) Sim.S.realtime = false; else { const s = Sim.S; s.time = Date.now(); s.realtime = true; s.nextPull = Math.min(s.nextPull, s.time + 15 * 60000); if (s.nextPull < s.time) s.nextPull = s.time + 5000; } document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('on', +b.dataset.speed === v)); }
@@ -184,8 +207,8 @@
     $('sub').textContent = towns + (towns === 1 ? ' town' : ' towns') + ' · ' + faiths + (faiths === 1 ? ' faith' : ' faiths') + ' · ' + (s.wars.length ? s.wars.length + (s.wars.length === 1 ? ' war' : ' wars') : 'at peace') + ' · ' + s.stats.births + ' born, ' + s.stats.deaths + ' died';
     $('mode').textContent = catching ? 'Catching up' : s.realtime && speed === 1 ? 'Live' : speed === 1 ? 'Time shifted' : speed + 'x';
     const left = Math.max(0, Math.round((s.nextPull - s.time) / 1000)), lp = s.lastPull;
-    $('foot').textContent = 'Next search pull in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + (lp ? ' · last pull kept ' + lp.n + ', skipped ' + lp.skipped + ' sports' : '') + (Host.mode === 'pi' ? ' · ' + (lp && lp.live ? 'live Google Trends' : 'saved trends (no live feed yet)') + (Host.weather ? ' · weather for ' + Host.weather.place : ' · weather simulated') : '');
-    if (Host.updated && Host.updated !== shownUpd) { shownUpd = Host.updated; const u = new Date(Host.updated), e = $('upd'); e.textContent = 'Updated ' + u.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' }) + ' ' + u.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(' ', '').toLowerCase(); e.style.display = 'block'; }
+    $('foot').textContent = 'Next search pull in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + (lp ? ' · last pull kept ' + lp.n + ', skipped ' + lp.skipped + ' sports' : '') + (Host.mode === 'pi' ? ' · ' + (lp && lp.live ? 'live Google Trends' : 'saved trends (no live feed yet)') + (Host.weather ? ' · weather for ' + Host.weather.place : ' · weather simulated') + (R.fps ? ' · ' + R.fps + ' fps' + (R.flat ? ' flat' : ' stacked') + (level ? ' (detail ' + level + ')' : '') : '') : '');
+    if (Host.updated && Host.updated !== shownUpd) { shownUpd = Host.updated; const u = new Date(Host.updated), e = $('upd'); e.textContent = 'Last Update: ' + u.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' }) + ' ' + u.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(' ', '').toLowerCase(); e.style.display = 'block'; }
     if (s.feed.length && s.feed[0].id !== lastFeed) { lastFeed = s.feed[0].id; drawFeed(s); }
     if (cardHit && $('card').style.display === 'block' && cardHit.person) showCard(cardHit);
   }
@@ -217,23 +240,26 @@
     } catch (e) { fail(e, 'drawing'); }
     requestAnimationFrame(tick);
   }
+  // On the Pi: if the picture cannot keep up, trade detail for smoothness, one step at a time. It never steps back up by itself.
+  const STEPS = [{ tipEvery: 2 }, { noClouds: true }, { scale: 0.5 }, { tipStride: 4, tipEvery: 4 }, { noWx: true }, { scale: 0.4 }]; let level = 0, slow = 0;
+  setInterval(() => { if (!booted || Host.mode !== 'pi' || Host.cfg.governor === false || document.hidden || lastNeed > 90 || !R.fps) return; slow = R.fps < fps * 0.72 ? slow + 1 : 0; if (slow >= 3 && level < STEPS.length) { R.setLevel(STEPS[level++]); slow = -2; } }, 6000);
   // If the browser stops drawing (screen asleep, window hidden), the world still lives and saves.
   setInterval(() => { const now = performance.now(); if (booted && now - lastTick > 3000) { try { advance(now); } catch (e) { fail(e, 'background'); } } }, 2000);
-  setInterval(() => { if (!booted) return; const s = Sim.S, m = performance.memory; Host.ping({ people: s.people.length, towns: s.towns.length, errors: errs, behind: Math.round(lastNeed), drawAgo: Math.round((performance.now() - lastDraw) / 1000), heapMB: m ? Math.round(m.usedJSHeapSize / 1048576) : null, saveKB: null }); }, 30000);
+  setInterval(() => { if (!booted) return; const s = Sim.S, m = performance.memory; Host.ping({ people: s.people.length, towns: s.towns.length, errors: errs, behind: Math.round(lastNeed), drawAgo: Math.round((performance.now() - lastDraw) / 1000), fps: R.fps || 0, level: level, gl: R.gl, flat: !!R.flat, heapMB: m ? Math.round(m.usedJSHeapSize / 1048576) : null, saveKB: null }); }, 30000);
   window.addEventListener('error', (e) => fail(e.error || e.message, 'page'));
   window.addEventListener('unhandledrejection', (e) => fail(e.reason, 'promise'));
   document.addEventListener('visibilitychange', () => { if (document.hidden) persist(); });
   note('Painting the world');
   (async function boot() {
     await Host.boot();
-    const q = QUALITY[Host.cfg.quality] || QUALITY.full; R.cfg = q; fps = +Host.cfg.fps || q.fps || 60;
-    if (Host.mode === 'pi') { saveEvery = 120000; if (!Host.cfg.controls) $('ctl').style.display = 'none'; document.body.style.cursor = 'none'; Sim.trendSource = () => Host.trends; document.addEventListener('keydown', (e) => { if (e.key === 'c') { const c = $('ctl'); c.style.display = c.style.display === 'none' ? 'flex' : 'none'; document.body.style.cursor = c.style.display === 'none' ? 'none' : 'auto'; } }); }
+    const q = Object.assign({}, QUALITY[Host.cfg.quality] || QUALITY.full); R.cfg = q; const lay = new URLSearchParams(location.search).get('layers') || Host.cfg.layers; if (lay) q.layers = lay; fps = +Host.cfg.fps || q.fps || 60;
+    if (Host.mode === 'pi') { saveEvery = 120000; if (!Host.cfg.controls) $('ctl').style.display = 'none'; document.body.classList.add('pi'); Sim.trendSource = () => Host.trends; document.addEventListener('keydown', (e) => { if (e.key === 'c') { const c = $('ctl'); c.style.display = c.style.display === 'none' ? 'flex' : 'none'; document.body.classList.toggle('pi', c.style.display === 'none'); } }); }
     let S = null; const saved = await Host.loadState();
     if (saved) { try { S = Sim.load(saved); } catch (e) { S = null; } }
     if (!S) { S = Sim.newWorld((Math.random() * 2 ** 31) | 0, Date.now()); S.realtime = true; }
     if (!S.realtime) S.realtime = false;
     if (Host.mode === 'pi') { S.realtime = true; await Host.refresh(); await Host.changed(); lastRefresh = performance.now(); const w = Host.weather; if (w) Sim.setLiveWeather(w.sky, w.temp); else Sim.clearWeather(); Host.changed(); }
-    last = performance.now(); R.init(canvas, () => { note(''); booted = true; requestAnimationFrame(tick); });
+    last = performance.now(); R.init({ ground: $('l-ground'), people: $('l-people'), top: $('l-top'), tips: $('l-tips'), wash: $('wash'), lights: $('lights'), clouds: $('clouds'), wx: $('wx'), flash: $('flash'), labels: $('labels') }, () => { note(''); booted = true; requestAnimationFrame(tick); });
   })();
 })();
 </script>
