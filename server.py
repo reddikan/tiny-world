@@ -12,6 +12,7 @@ It serves the page to the Pi's own browser and does the things a web page cannot
 
 Only the Python standard library is used, so nothing needs installing.
 """
+import shutil
 import json, os, re, subprocess, sys, threading, time, urllib.parse, urllib.request
 import xml.etree.ElementTree as ET
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -55,6 +56,46 @@ def restart_browser():
             subprocess.Popen([os.path.join(ROOT, 'kiosk.sh')], env=env, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         log('watchdog could not restart the browser: %s' % e)
+
+
+def browser_env():
+    pid = subprocess.run(['pgrep', '-o', '-f', BROWSER_PATTERN], capture_output=True, text=True).stdout.split()
+    if not pid:
+        return None
+    with open('/proc/%s/environ' % pid[0], 'rb') as f:
+        return dict(kv.split('=', 1) for kv in f.read().decode(errors='ignore').split('\0') if '=' in kv)
+
+
+def set_screen():
+    """Optional "screen": "1280x720" setting. A Pi 3 animates far more smoothly at 720p than at 1080p.
+    Applied with the desktop's own tools once the browser is up; it lasts until the next restart."""
+    want = str(config().get('screen') or '').strip().lower()
+    if not re.match(r'^\d+x\d+$', want):
+        return
+    for attempt in range(60):
+        time.sleep(10)
+        try:
+            env = browser_env()
+            if not env:
+                continue
+            time.sleep(8)  # let the window finish opening
+            if env.get('WAYLAND_DISPLAY') and shutil.which('wlr-randr'):
+                out = subprocess.run(['wlr-randr'], env=env, capture_output=True, text=True, timeout=20).stdout
+                names = [ln.split()[0] for ln in out.splitlines() if ln and not ln[0].isspace()]
+                res = [subprocess.run(['wlr-randr', '--output', n, '--mode', want], env=env, capture_output=True, text=True, timeout=20) for n in names]
+            elif env.get('DISPLAY') and shutil.which('xrandr'):
+                out = subprocess.run(['xrandr', '--query'], env=env, capture_output=True, text=True, timeout=20).stdout
+                names = [ln.split()[0] for ln in out.splitlines() if ' connected' in ln]
+                res = [subprocess.run(['xrandr', '--output', n, '--mode', want], env=env, capture_output=True, text=True, timeout=20) for n in names]
+            else:
+                log('screen size not changed: no wlr-randr or xrandr for this desktop')
+                return
+            bad = [(x.stderr or x.stdout).strip()[:200] for x in res if x.returncode]
+            log('screen set to %s on %s%s' % (want, ', '.join(names) or 'no outputs', (' (problems: %s)' % bad) if bad else ''))
+            return
+        except Exception as e:
+            log('screen size not changed: %s' % e)
+            return
 
 
 def self_update():
@@ -306,4 +347,5 @@ if __name__ == '__main__':
     log('server started')
     threading.Thread(target=watchdog, daemon=True).start()
     threading.Thread(target=self_update, daemon=True).start()
+    threading.Thread(target=set_screen, daemon=True).start()
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()

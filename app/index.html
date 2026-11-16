@@ -12,7 +12,7 @@
   #stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; background: #1c6c84; overflow: hidden; }
   #view { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; overflow: hidden; cursor: pointer; transform-origin: 0 0; background: #146ebe; }
   #view > canvas, #view > div { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; display: block; pointer-events: none; }
-  #lights { mix-blend-mode: screen; opacity: 0; }
+  #lights { opacity: 0; }
   #flash { background: #dfe8ff; opacity: 0; }
   #wx, #clouds, #labels { overflow: hidden; }
   body.pi, body.pi * { cursor: none !important; }
@@ -137,7 +137,7 @@
 
   const Host = window.TW_HOST; let fps = 60, lastDraw = 0, saveEvery = 45000, lastRefresh = -1e9, lastVer = 0;
   const persist = () => Host.saveState(Sim.save());
-  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 30, tipStride: 2, tipEvery: 1, budget: 14, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
+  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 30, tipStride: 2, tipEvery: 1, merge: true, budget: 14, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
   Sim.init(window.WORLD_DATA);
 
   function setSpeed(v) { speed = v; if (v !== 1) Sim.S.realtime = false; else { const s = Sim.S; s.time = Date.now(); s.realtime = true; s.nextPull = Math.min(s.nextPull, s.time + 15 * 60000); if (s.nextPull < s.time) s.nextPull = s.time + 5000; } document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('on', +b.dataset.speed === v)); }
@@ -207,7 +207,7 @@
     $('sub').textContent = towns + (towns === 1 ? ' town' : ' towns') + ' · ' + faiths + (faiths === 1 ? ' faith' : ' faiths') + ' · ' + (s.wars.length ? s.wars.length + (s.wars.length === 1 ? ' war' : ' wars') : 'at peace') + ' · ' + s.stats.births + ' born, ' + s.stats.deaths + ' died';
     $('mode').textContent = catching ? 'Catching up' : s.realtime && speed === 1 ? 'Live' : speed === 1 ? 'Time shifted' : speed + 'x';
     const left = Math.max(0, Math.round((s.nextPull - s.time) / 1000)), lp = s.lastPull;
-    $('foot').textContent = 'Next search pull in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + (lp ? ' · last pull kept ' + lp.n + ', skipped ' + lp.skipped + ' sports' : '') + (Host.mode === 'pi' ? ' · ' + (lp && lp.live ? 'live Google Trends' : 'saved trends (no live feed yet)') + (Host.weather ? ' · weather for ' + Host.weather.place : ' · weather simulated') + (R.fps ? ' · ' + R.fps + ' fps' + (R.flat ? ' flat' : ' stacked') + (level ? ' (detail ' + level + ')' : '') : '') : '');
+    $('foot').textContent = 'Next search pull in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + (lp ? ' · last pull kept ' + lp.n + ', skipped ' + lp.skipped + ' sports' : '') + (Host.mode === 'pi' ? ' · ' + (lp && lp.live ? 'live Google Trends' : 'saved trends (no live feed yet)') + (Host.weather ? ' · weather for ' + Host.weather.place : ' · weather simulated') + (R.fps ? ' · ' + R.fps + ' fps' + (R.flat ? ' flat' : ' stacked') + (level ? ' (detail ' + level + ')' : '') + (R.fps < 20 ? ' · ' + window.innerWidth + 'x' + window.innerHeight + ' · ' + String(R.gl).replace(/ANGLE \(|Broadcom,? ?/g, '').slice(0, 26) : '') : '') : '');
     if (Host.updated && Host.updated !== shownUpd) { shownUpd = Host.updated; const u = new Date(Host.updated), e = $('upd'); e.textContent = 'Last Update: ' + u.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' }) + ' ' + u.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(' ', '').toLowerCase(); e.style.display = 'block'; }
     if (s.feed.length && s.feed[0].id !== lastFeed) { lastFeed = s.feed[0].id; drawFeed(s); }
     if (cardHit && $('card').style.display === 'block' && cardHit.person) showCard(cardHit);
@@ -241,8 +241,14 @@
     requestAnimationFrame(tick);
   }
   // On the Pi: if the picture cannot keep up, trade detail for smoothness, one step at a time. It never steps back up by itself.
-  const STEPS = [{ tipEvery: 2 }, { noClouds: true }, { scale: 0.5 }, { tipStride: 4, tipEvery: 4 }, { noWx: true }, { scale: 0.4 }]; let level = 0, slow = 0;
-  setInterval(() => { if (!booted || Host.mode !== 'pi' || Host.cfg.governor === false || document.hidden || lastNeed > 90 || !R.fps) return; slow = R.fps < fps * 0.72 ? slow + 1 : 0; if (slow >= 3 && level < STEPS.length) { R.setLevel(STEPS[level++]); slow = -2; } }, 6000);
+  const STEPS = [[{ noClouds: true }, { noClouds: false }], [{ scale: 0.5 }, { scale: 0.6667 }], [{ tipStride: 4 }, { tipStride: 2 }], [{ noWx: true }, { noWx: false }]];
+  let level = 0, gi = 0, slow = 0, trial = null;
+  setInterval(() => {
+    if (!booted || Host.mode !== 'pi' || Host.cfg.governor === false || document.hidden || lastNeed > 90 || !R.fps) return;
+    if (trial) { trial.n++; trial.sum += R.fps; if (trial.n < 3) return; const got = trial.sum / trial.n; if (got < trial.before * 1.15) R.setLevel(trial.undo); else level++; trial = null; slow = 0; return; } // a step that did not help is taken back
+    slow = R.fps < fps * 0.72 ? slow + 1 : 0;
+    if (slow >= 3 && gi < STEPS.length) { const s = STEPS[gi++]; trial = { before: R.fps, undo: s[1], n: 0, sum: 0 }; R.setLevel(s[0]); }
+  }, 6000);
   // If the browser stops drawing (screen asleep, window hidden), the world still lives and saves.
   setInterval(() => { const now = performance.now(); if (booted && now - lastTick > 3000) { try { advance(now); } catch (e) { fail(e, 'background'); } } }, 2000);
   setInterval(() => { if (!booted) return; const s = Sim.S, m = performance.memory; Host.ping({ people: s.people.length, towns: s.towns.length, errors: errs, behind: Math.round(lastNeed), drawAgo: Math.round((performance.now() - lastDraw) / 1000), fps: R.fps || 0, level: level, gl: R.gl, flat: !!R.flat, heapMB: m ? Math.round(m.usedJSHeapSize / 1048576) : null, saveKB: null }); }, 30000);

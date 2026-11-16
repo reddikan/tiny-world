@@ -3,7 +3,7 @@
   'use strict';
   const Sim = root.TW_SIM; const W = 1920, H = 1080, PPU = 160, TAU = Math.PI * 2;
   const R = { ready: false, sel: null, cfg: {} };
-  const CFG = { scale: 1, fps: 60, tipStride: 1, tipEvery: 1, layers: 'auto', budget: 9, repaintGap: 1400, shadowChunk: 1e9, keyRes: 1, lite: false };
+  const CFG = { scale: 1, fps: 60, tipStride: 1, tipEvery: 1, layers: 'auto', merge: false, budget: 9, repaintGap: 1400, shadowChunk: 1e9, keyRes: 1, lite: false };
   let bstat, bsctx, btop, btctx, lit2, tipsBuild = null, tipN = 0, job = null, jobL = null, firstPaint = true;
   let ctx, stat, sctx, top, tctx, order, sy, dyn = [], lastKey = '', lastDirty = -1, lastStat = -1e9, band = 0, flashUntil = 0;
   let nt, tpx, tnr, tcode, tdep, ttb, tpk, tjit, lit, openList = [], phase;
@@ -102,9 +102,9 @@
     }
   }
   function shimmer(c, now) {
-    const n = Math.min(openList.length, CFG.lite ? 45 : 110); if (!n) return;
+    const n = Math.min(openList.length, (CFG.lite ? 45 : 110) * (MERGE ? 3 : 1)); if (!n) return;
     for (let k = 0; k < n; k++) {
-      const i = openList[(Math.random() * openList.length) | 0], f = 1 + 0.085 * Math.sin(now * 0.0016 + phase[i]) + 0.04 * Math.sin(now * 0.0041 + phase[i] * 3);
+      const i = openList[(Math.random() * openList.length) | 0]; if (MERGE && (under(tpx[i * 6], tpx[i * 6 + 1]) || under(tpx[i * 6 + 2], tpx[i * 6 + 3]) || under(tpx[i * 6 + 4], tpx[i * 6 + 5]))) continue; const f = 1 + 0.085 * Math.sin(now * 0.0016 + phase[i]) + 0.04 * Math.sin(now * 0.0041 + phase[i] * 3);
       c.fillStyle = 'rgb(' + Math.min(255, lit[i * 3] * f | 0) + ',' + Math.min(255, lit[i * 3 + 1] * f | 0) + ',' + Math.min(255, lit[i * 3 + 2] * f | 0) + ')';
       c.beginPath(); c.moveTo(tpx[i * 6], tpx[i * 6 + 1]); c.lineTo(tpx[i * 6 + 2], tpx[i * 6 + 3]); c.lineTo(tpx[i * 6 + 4], tpx[i * 6 + 5]); c.fill();
     }
@@ -238,12 +238,19 @@
     }
   }
   function startPaint(S, now) { jobL = getL(); tipsBuild = []; job = paintGen(S, now); }
+  // In merged mode roofs and trees are painted into the ground picture; this map remembers what they cover so people walking under them are not drawn on top.
+  const MW = 480, MH = 270;
+  function under(x, y) { const mx = x * MW / W | 0, my = y * MH / H | 0; return mx >= 0 && my >= 0 && mx < MW && my < MH && mask[my * MW + mx] === 1; }
+  function buildMask() {
+    if (!maskCv) { maskCv = document.createElement('canvas'); maskCv.width = MW; maskCv.height = MH; mask = new Uint8Array(MW * MH); }
+    const m = maskCv.getContext('2d', { willReadFrequently: true }); m.clearRect(0, 0, MW, MH); m.drawImage(btop, 0, 0, MW, MH); const d = m.getImageData(0, 0, MW, MH).data; for (let i = 0; i < MW * MH; i++) mask[i] = d[i * 4 + 3] > 110 ? 1 : 0;
+  }
   function runPaint(budget) {
     const live = getL(), t0 = performance.now(); setL(jobL); let done = false;
     do { done = job.next().done; } while (!done && performance.now() - t0 < budget);
     jobL = getL(); setL(live);
     if (done) { // show the freshly painted layers
-      gctx.drawImage(bstat, 0, 0, W, H); vtctx.clearRect(0, 0, W, H); vtctx.drawImage(btop, 0, 0, W, H);
+      gctx.drawImage(bstat, 0, 0, W, H); if (MERGE) { gctx.drawImage(btop, 0, 0, W, H); buildMask(); } else { vtctx.clearRect(0, 0, W, H); vtctx.drawImage(btop, 0, 0, W, H); }
       const t = lit; lit = lit2; lit2 = t; tips = tipsBuild; job = null; R.paints = (R.paints || 0) + 1; lightsAt = -1e9;
     }
   }
@@ -252,7 +259,7 @@
   // ---------- layers. The map is a stack: ground, people, roofs and trees, swaying treetops, then
   // lights, clouds, weather and labels. Only the people and treetop layers are redrawn every frame;
   // clouds, weather and labels are moved by the browser itself, which is far cheaper on a small computer.
-  let FLAT = false, EL = null, gctx, pctx, vtctx, lctx, lightsAt = -1e9, lightsN = -1, frameN = 0, fpsT = 0, fpsC = 0, overlayAt = 0, cloudEls = [], wxMode = null, rainURL = null, snowURL = null;
+  let FLAT = false, MERGE = false, mask = null, maskCv = null, EL = null, gctx, pctx, vtctx, lctx, lightsAt = -1e9, lightsN = -1, frameN = 0, fpsT = 0, fpsC = 0, overlayAt = 0, cloudEls = [], wxMode = null, rainURL = null, snowURL = null;
   const K = 1280 / W; // logical map units to page pixels
   function sizeCanvases() {
     const SC = CFG.scale, set = (cv) => { cv.width = Math.round(W * SC); cv.height = Math.round(H * SC); const x = cv.getContext('2d'); x.setTransform(SC, 0, 0, SC, 0, 0); return x; };
@@ -266,6 +273,7 @@
     // With a graphics chip the browser stacks the layers for free; without one, a single picture is cheaper.
     R.gpu = !/none|swiftshader|llvmpipe|softpipe|software/i.test(R.gl); FLAT = CFG.layers === 'flat' || (CFG.layers !== 'stack' && !R.gpu); R.flat = FLAT;
     if (FLAT) { for (const k of ['ground', 'people', 'top', 'clouds', 'labels']) EL[k].style.display = 'none'; flatInit(); }
+    MERGE = !FLAT && !!CFG.merge; if (MERGE) { mask = new Uint8Array(MW * MH); for (const k of ['people', 'top']) EL[k].style.display = 'none'; }
     order = Sim.D.sprites.map((s, i) => i); sy = Sim.D.sprites.map((s) => s[2]); buildMesh(); lit2 = new Uint8Array(nt * 3);
     glow = mkSprite(128, [[0, 'rgba(255,214,130,1)'], [0.35, 'rgba(255,170,72,0.45)'], [1, 'rgba(255,150,60,0)']]);
     R.ready = true; done && done();
@@ -426,17 +434,18 @@
     if (!R.ready) return; const key = calcLight(S); frameN++;
     fpsC++; if (now - fpsT > 2000) { R.fps = fpsT ? Math.round(fpsC * 1000 / (now - fpsT)) : 0; fpsT = now; fpsC = 0; }
     if (!job && (S.dirty !== lastDirty || key !== lastKey) && (firstPaint || now - lastStat > CFG.repaintGap)) { lastDirty = S.dirty; lastKey = key; lastStat = now; startPaint(S, now); }
-    if (job) { runPaint(firstPaint ? 1e9 : CFG.budget); firstPaint = false; } else shimmer(gctx, now);
+    if (job) { runPaint(firstPaint ? 1e9 : CFG.budget); firstPaint = false; } else if (!MERGE || frameN % 3 === 0) shimmer(gctx, now);
     if (!FLAT && now - overlayAt > 240) { overlayAt = now; overlay(S, now); }
     // people walk on the ground, under roofs and treetops: glow where they gather, small shadows, then faceted figures
-    const P = S.people, c = FLAT ? ctx : pctx; if (FLAT) c.drawImage(EL.ground, 0, 0, W, H); else c.clearRect(0, 0, W, H); c.globalAlpha = 0.11 + 0.05 * nightN;
-    for (let i = 0; i < P.length; i++) { const p = P[i]; if (CFG.lite && p.ev == null) continue; c.drawImage(glow, p.x * PPU - 44, p.y * PPU - 44, 88, 88); }
+    const P = S.people, c = FLAT || MERGE ? ctx : pctx, one = FLAT || MERGE; if (FLAT) c.drawImage(EL.ground, 0, 0, W, H); else c.clearRect(0, 0, W, H);
+    if (MERGE) for (let i = 0; i < P.length; i++) P[i]._u = under(P[i].x * PPU, P[i].y * PPU); c.globalAlpha = 0.11 + 0.05 * nightN;
+    for (let i = 0; i < P.length; i++) { const p = P[i]; if ((CFG.lite && p.ev == null) || (MERGE && p._u)) continue; c.drawImage(glow, p.x * PPU - 44, p.y * PPU - 44, 88, 88); }
     c.globalAlpha = 1;
     for (let i = 0; i < P.length; i++) { const p = P[i]; if (p.act === 'work' && p.tgt === -2 && p.arr && !Sim.isLand(p.x, p.y)) drawBoat(c, p.x + 0.004 * Math.sin(now / 600 + p.id), p.y + 0.012 + 0.004 * Math.sin(now / 800 + p.id), (p.id % 6)); }
-    if (shA > 0.02) { c.beginPath(); for (let i = 0; i < P.length; i++) { const p = P[i], r = p.age < 14 ? 4.2 : 6.2, x = p.x * PPU + shx * 6, y = p.y * PPU + shy * 6 + 1.5; c.moveTo(x - r, y); c.lineTo(x, y - r * 0.8); c.lineTo(x + r, y); c.lineTo(x, y + r * 0.8); c.closePath(); } c.fillStyle = 'rgba(18,22,58,' + Math.min(0.6, shA * 1.4).toFixed(3) + ')'; c.fill('nonzero'); }
+    if (shA > 0.02) { c.beginPath(); for (let i = 0; i < P.length; i++) { const p = P[i]; if (MERGE && p._u) continue; const r = p.age < 14 ? 4.2 : 6.2, x = p.x * PPU + shx * 6, y = p.y * PPU + shy * 6 + 1.5; c.moveTo(x - r, y); c.lineTo(x, y - r * 0.8); c.lineTo(x + r, y); c.lineTo(x, y + r * 0.8); c.closePath(); } c.fillStyle = 'rgba(18,22,58,' + Math.min(0.6, shA * 1.4).toFixed(3) + ')'; c.fill('nonzero'); }
     const dim = 1 - 0.3 * nightN, dx = nightN > 0.5 ? MX : lx, dy = nightN > 0.5 ? MY : ly;
     for (let i = 0; i < P.length; i++) {
-      const p = P[i], x = p.x * PPU, y = p.y * PPU, r = p.age < 14 ? 4.4 : 6.4, col = townRGB(S.towns[p.home].color), ro = (p.id % 9) * 0.7;
+      const p = P[i]; if (MERGE && p._u) continue; const x = p.x * PPU, y = p.y * PPU, r = p.age < 14 ? 4.4 : 6.4, col = townRGB(S.towns[p.home].color), ro = (p.id % 9) * 0.7;
       let px = x + r * Math.cos(ro), py = y + r * Math.sin(ro);
       for (let k = 0; k < 4; k++) {
         const a1 = ro + (k + 1) * TAU / 4, qx = x + r * Math.cos(a1), qy = y + r * Math.sin(a1), am = ro + (k + 0.5) * TAU / 4, f = Math.min(1.18, 0.62 + 0.62 * Math.max(0, Math.cos(am) * dx + Math.sin(am) * dy + 0.35)) * dim;
@@ -447,8 +456,8 @@
     }
     for (const f of S.flash) { const a = 1 - (S.lifeT - f[2]) / 20; if (a > 0) { c.strokeStyle = 'rgba(255,80,60,' + a.toFixed(2) + ')'; c.lineWidth = 3; c.beginPath(); c.arc(f[0] * PPU, f[1] * PPU, 10 + (1 - a) * 22, 0, TAU); c.stroke(); } }
     // the layer above the roofs: swaying treetops, fires, and the red rings that pinpoint attackers
-    if (FLAT || frameN % CFG.tipEvery === 0) {
-      if (FLAT) ctx.drawImage(EL.top, 0, 0, W, H); else ctx.clearRect(0, 0, W, H); drawTips(now);
+    if (one || frameN % CFG.tipEvery === 0) {
+      if (FLAT) ctx.drawImage(EL.top, 0, 0, W, H); else if (!MERGE) ctx.clearRect(0, 0, W, H); drawTips(now);
       const pulse = 0.5 + 0.5 * Math.sin(now / 220); ctx.lineWidth = 3;
       for (let i = 0; i < P.length; i++) { const p = P[i]; if (!(p.act === 'raid' || (p.mark && p.mark > S.lifeT))) continue; const x = p.x * PPU, y = p.y * PPU, rr = 15 + pulse * 4;
         ctx.strokeStyle = 'rgba(255,40,40,' + (0.75 + 0.25 * pulse).toFixed(2) + ')'; ctx.beginPath(); ctx.arc(x, y, rr, 0, TAU); ctx.moveTo(x - rr - 6, y); ctx.lineTo(x - rr + 4, y); ctx.moveTo(x + rr - 4, y); ctx.lineTo(x + rr + 6, y); ctx.moveTo(x, y - rr - 6); ctx.lineTo(x, y - rr + 4); ctx.moveTo(x, y + rr - 4); ctx.lineTo(x, y + rr + 6); ctx.stroke(); }
