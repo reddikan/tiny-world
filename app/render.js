@@ -3,7 +3,7 @@
   'use strict';
   const Sim = root.TW_SIM; const W = 1920, H = 1080, PPU = 160, TAU = Math.PI * 2;
   const R = { ready: false, sel: null, cfg: {} };
-  const CFG = { scale: 1, fps: 60, tipStride: 1, tipEvery: 1, layers: 'auto', merge: false, budget: 9, repaintGap: 1400, shadowChunk: 1e9, keyRes: 1, lite: false };
+  const CFG = { scale: 1, fps: 60, tipStride: 1, tipEvery: 1, layers: 'auto', merge: false, still: false, sprites: false, budget: 9, repaintGap: 1400, shadowChunk: 1e9, keyRes: 1, lite: false };
   let bstat, bsctx, btop, btctx, lit2, tipsBuild = null, tipN = 0, job = null, jobL = null, firstPaint = true;
   let ctx, stat, sctx, top, tctx, order, sy, dyn = [], lastKey = '', lastDirty = -1, lastStat = -1e9, band = 0, flashUntil = 0;
   let nt, tpx, tnr, tcode, tdep, ttb, tpk, tjit, lit, openList = [], phase;
@@ -252,6 +252,7 @@
     if (done) { // show the freshly painted layers
       gctx.drawImage(bstat, 0, 0, W, H); if (MERGE) { gctx.drawImage(btop, 0, 0, W, H); buildMask(); } else { vtctx.clearRect(0, 0, W, H); vtctx.drawImage(btop, 0, 0, W, H); }
       const t = lit; lit = lit2; lit2 = t; tips = tipsBuild; job = null; R.paints = (R.paints || 0) + 1; lightsAt = -1e9;
+      if (STILL) { const k = ctx; ctx = gctx; drawTips(0); ctx = k; } // treetops painted once, not swaying
     }
   }
   function mkSprite(size, stops) { const cv = document.createElement('canvas'); cv.width = cv.height = size; const c = cv.getContext('2d'), g = c.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2); for (const s of stops) g.addColorStop(s[0], s[1]); c.fillStyle = g; c.fillRect(0, 0, size, size); return cv; }
@@ -259,7 +260,7 @@
   // ---------- layers. The map is a stack: ground, people, roofs and trees, swaying treetops, then
   // lights, clouds, weather and labels. Only the people and treetop layers are redrawn every frame;
   // clouds, weather and labels are moved by the browser itself, which is far cheaper on a small computer.
-  let FLAT = false, MERGE = false, mask = null, maskCv = null, EL = null, gctx, pctx, vtctx, lctx, lightsAt = -1e9, lightsN = -1, frameN = 0, fpsT = 0, fpsC = 0, overlayAt = 0, cloudEls = [], wxMode = null, rainURL = null, snowURL = null;
+  let FLAT = false, MERGE = false, STILL = false, sprKey = '', spr = new Map(), mask = null, maskCv = null, EL = null, gctx, pctx, vtctx, lctx, lightsAt = -1e9, lightsN = -1, frameN = 0, fpsT = 0, fpsC = 0, overlayAt = 0, cloudEls = [], wxMode = null, rainURL = null, snowURL = null;
   const K = 1280 / W; // logical map units to page pixels
   function sizeCanvases() {
     const SC = CFG.scale, set = (cv) => { cv.width = Math.round(W * SC); cv.height = Math.round(H * SC); const x = cv.getContext('2d'); x.setTransform(SC, 0, 0, SC, 0, 0); return x; };
@@ -273,7 +274,7 @@
     // With a graphics chip the browser stacks the layers for free; without one, a single picture is cheaper.
     R.gpu = !/none|swiftshader|llvmpipe|softpipe|software/i.test(R.gl); FLAT = CFG.layers === 'flat' || (CFG.layers !== 'stack' && !R.gpu); R.flat = FLAT;
     if (FLAT) { for (const k of ['ground', 'people', 'top', 'clouds', 'labels']) EL[k].style.display = 'none'; flatInit(); }
-    MERGE = !FLAT && !!CFG.merge; if (MERGE) { mask = new Uint8Array(MW * MH); for (const k of ['people', 'top']) EL[k].style.display = 'none'; }
+    MERGE = !FLAT && !!CFG.merge; if (MERGE) { mask = new Uint8Array(MW * MH); for (const k of ['people', 'top']) EL[k].style.display = 'none'; } STILL = MERGE && !!CFG.still;
     order = Sim.D.sprites.map((s, i) => i); sy = Sim.D.sprites.map((s) => s[2]); buildMesh(); lit2 = new Uint8Array(nt * 3);
     glow = mkSprite(128, [[0, 'rgba(255,214,130,1)'], [0.35, 'rgba(255,170,72,0.45)'], [1, 'rgba(255,150,60,0)']]);
     R.ready = true; done && done();
@@ -430,11 +431,24 @@
     for (const f of S.fx) { const a = (S.lifeT - f.t) / f.d; if (a < 0 || a > 1) continue; emoji(f.e, f.x * PPU, f.y * PPU - 20 - a * 26, f.d > 100 ? 34 : 26, a > 0.8 ? (1 - a) * 5 : Math.min(1, a * 12 + 0.3), now + f.t * 13); }
   }
 
+  function personSprite(S, p, dx, dy, dim) {
+    const key = p.home * 64 + (p.id % 9) * 4 + (p.age < 14 ? 2 : 0) + (p.soldier ? 1 : 0); let cv = spr.get(key); if (cv) return cv;
+    cv = document.createElement('canvas'); cv.width = cv.height = 64; const c = cv.getContext('2d'); c.scale(2, 2); const x = 16, y = 16, kid = p.age < 14;
+    if (shA > 0.02) { const r = kid ? 4.2 : 6.2, sx = x + Math.max(-8, Math.min(8, shx * 6)), sy = y + Math.max(-8, Math.min(8, shy * 6)) + 1.5; c.fillStyle = 'rgba(18,22,58,' + Math.min(0.6, shA * 1.4).toFixed(3) + ')'; c.beginPath(); c.moveTo(sx - r, sy); c.lineTo(sx, sy - r * 0.8); c.lineTo(sx + r, sy); c.lineTo(sx, sy + r * 0.8); c.closePath(); c.fill(); }
+    const r = kid ? 4.4 : 6.4, col = townRGB(S.towns[p.home].color), ro = (p.id % 9) * 0.7; let px = x + r * Math.cos(ro), py = y + r * Math.sin(ro);
+    for (let k = 0; k < 4; k++) {
+      const a1 = ro + (k + 1) * TAU / 4, qx = x + r * Math.cos(a1), qy = y + r * Math.sin(a1), am = ro + (k + 0.5) * TAU / 4, f = Math.min(1.18, 0.62 + 0.62 * Math.max(0, Math.cos(am) * dx + Math.sin(am) * dy + 0.35)) * dim;
+      c.fillStyle = 'rgb(' + Math.min(255, col[0] * f | 0) + ',' + Math.min(255, col[1] * f | 0) + ',' + Math.min(255, col[2] * f | 0) + ')';
+      c.beginPath(); c.moveTo(x, y - 1); c.lineTo(px, py); c.lineTo(qx, qy); c.closePath(); c.fill(); px = qx; py = qy;
+    }
+    if (p.soldier) { c.fillStyle = '#e02626'; c.beginPath(); c.moveTo(x - 2.4, y + 1.4); c.lineTo(x, y - 3); c.lineTo(x + 2.4, y + 1.4); c.closePath(); c.fill(); }
+    spr.set(key, cv); return cv;
+  }
   function frame(S, realDt, now) {
     if (!R.ready) return; const key = calcLight(S); frameN++;
     fpsC++; if (now - fpsT > 2000) { R.fps = fpsT ? Math.round(fpsC * 1000 / (now - fpsT)) : 0; fpsT = now; fpsC = 0; }
     if (!job && (S.dirty !== lastDirty || key !== lastKey) && (firstPaint || now - lastStat > CFG.repaintGap)) { lastDirty = S.dirty; lastKey = key; lastStat = now; startPaint(S, now); }
-    if (job) { runPaint(firstPaint ? 1e9 : CFG.budget); firstPaint = false; } else if (!MERGE || frameN % 3 === 0) shimmer(gctx, now);
+    if (job) { runPaint(firstPaint ? 1e9 : CFG.budget); firstPaint = false; } else if (STILL) { } else if (!MERGE || frameN % 3 === 0) shimmer(gctx, now);
     if (!FLAT && now - overlayAt > 240) { overlayAt = now; overlay(S, now); }
     // people walk on the ground, under roofs and treetops: glow where they gather, small shadows, then faceted figures
     const P = S.people, c = FLAT || MERGE ? ctx : pctx, one = FLAT || MERGE; if (FLAT) c.drawImage(EL.ground, 0, 0, W, H); else c.clearRect(0, 0, W, H);
@@ -442,6 +456,11 @@
     for (let i = 0; i < P.length; i++) { const p = P[i]; if ((CFG.lite && p.ev == null) || (MERGE && p._u)) continue; c.drawImage(glow, p.x * PPU - 44, p.y * PPU - 44, 88, 88); }
     c.globalAlpha = 1;
     for (let i = 0; i < P.length; i++) { const p = P[i]; if (p.act === 'work' && p.tgt === -2 && p.arr && !Sim.isLand(p.x, p.y)) drawBoat(c, p.x + 0.004 * Math.sin(now / 600 + p.id), p.y + 0.012 + 0.004 * Math.sin(now / 800 + p.id), (p.id % 6)); }
+    if (CFG.sprites) { // each figure is a small ready-made picture, shadow included; repainted only when the light changes
+      const dimS = 1 - 0.3 * nightN, sdx = nightN > 0.5 ? MX : lx, sdy = nightN > 0.5 ? MY : ly, k = [sdx, sdy, dimS, shx, shy, shA].map((v) => v.toFixed(1)).join();
+      if (k !== sprKey) { sprKey = k; spr.clear(); }
+      for (let i = 0; i < P.length; i++) { const p = P[i]; if (MERGE && p._u) continue; c.drawImage(personSprite(S, p, sdx, sdy, dimS), p.x * PPU - 16, p.y * PPU - 16, 32, 32); }
+    } else {
     if (shA > 0.02) { c.beginPath(); for (let i = 0; i < P.length; i++) { const p = P[i]; if (MERGE && p._u) continue; const r = p.age < 14 ? 4.2 : 6.2, x = p.x * PPU + shx * 6, y = p.y * PPU + shy * 6 + 1.5; c.moveTo(x - r, y); c.lineTo(x, y - r * 0.8); c.lineTo(x + r, y); c.lineTo(x, y + r * 0.8); c.closePath(); } c.fillStyle = 'rgba(18,22,58,' + Math.min(0.6, shA * 1.4).toFixed(3) + ')'; c.fill('nonzero'); }
     const dim = 1 - 0.3 * nightN, dx = nightN > 0.5 ? MX : lx, dy = nightN > 0.5 ? MY : ly;
     for (let i = 0; i < P.length; i++) {
@@ -454,10 +473,11 @@
       }
       if (p.soldier) { c.fillStyle = '#e02626'; c.beginPath(); c.moveTo(x - 2.4, y + 1.4); c.lineTo(x, y - 3); c.lineTo(x + 2.4, y + 1.4); c.closePath(); c.fill(); }
     }
+    }
     for (const f of S.flash) { const a = 1 - (S.lifeT - f[2]) / 20; if (a > 0) { c.strokeStyle = 'rgba(255,80,60,' + a.toFixed(2) + ')'; c.lineWidth = 3; c.beginPath(); c.arc(f[0] * PPU, f[1] * PPU, 10 + (1 - a) * 22, 0, TAU); c.stroke(); } }
     // the layer above the roofs: swaying treetops, fires, and the red rings that pinpoint attackers
     if (one || frameN % CFG.tipEvery === 0) {
-      if (FLAT) ctx.drawImage(EL.top, 0, 0, W, H); else if (!MERGE) ctx.clearRect(0, 0, W, H); drawTips(now);
+      if (FLAT) ctx.drawImage(EL.top, 0, 0, W, H); else if (!MERGE) ctx.clearRect(0, 0, W, H); if (!STILL) drawTips(now);
       const pulse = 0.5 + 0.5 * Math.sin(now / 220); ctx.lineWidth = 3;
       for (let i = 0; i < P.length; i++) { const p = P[i]; if (!(p.act === 'raid' || (p.mark && p.mark > S.lifeT))) continue; const x = p.x * PPU, y = p.y * PPU, rr = 15 + pulse * 4;
         ctx.strokeStyle = 'rgba(255,40,40,' + (0.75 + 0.25 * pulse).toFixed(2) + ')'; ctx.beginPath(); ctx.arc(x, y, rr, 0, TAU); ctx.moveTo(x - rr - 6, y); ctx.lineTo(x - rr + 4, y); ctx.moveTo(x + rr - 4, y); ctx.lineTo(x + rr + 6, y); ctx.moveTo(x, y - rr - 6); ctx.lineTo(x, y - rr + 4); ctx.moveTo(x, y + rr - 4); ctx.lineTo(x, y + rr + 6); ctx.stroke(); }

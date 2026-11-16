@@ -137,7 +137,7 @@
 
   const Host = window.TW_HOST; let fps = 60, lastDraw = 0, saveEvery = 45000, lastRefresh = -1e9, lastVer = 0;
   const persist = () => Host.saveState(Sim.save());
-  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 30, tipStride: 2, tipEvery: 1, merge: true, budget: 14, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
+  const QUALITY = { full: { scale: 1, fps: 60 }, pi: { scale: 0.6667, fps: 30, tipStride: 2, tipEvery: 1, merge: true, still: true, sprites: true, noClouds: true, budget: 14, repaintGap: 6000, shadowChunk: 500, keyRes: 0.5, lite: true } };
   Sim.init(window.WORLD_DATA);
 
   function setSpeed(v) { speed = v; if (v !== 1) Sim.S.realtime = false; else { const s = Sim.S; s.time = Date.now(); s.realtime = true; s.nextPull = Math.min(s.nextPull, s.time + 15 * 60000); if (s.nextPull < s.time) s.nextPull = s.time + 5000; } document.querySelectorAll('[data-speed]').forEach((b) => b.classList.toggle('on', +b.dataset.speed === v)); }
@@ -207,7 +207,7 @@
     $('sub').textContent = towns + (towns === 1 ? ' town' : ' towns') + ' · ' + faiths + (faiths === 1 ? ' faith' : ' faiths') + ' · ' + (s.wars.length ? s.wars.length + (s.wars.length === 1 ? ' war' : ' wars') : 'at peace') + ' · ' + s.stats.births + ' born, ' + s.stats.deaths + ' died';
     $('mode').textContent = catching ? 'Catching up' : s.realtime && speed === 1 ? 'Live' : speed === 1 ? 'Time shifted' : speed + 'x';
     const left = Math.max(0, Math.round((s.nextPull - s.time) / 1000)), lp = s.lastPull;
-    $('foot').textContent = 'Next search pull in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + (lp ? ' · last pull kept ' + lp.n + ', skipped ' + lp.skipped + ' sports' : '') + (Host.mode === 'pi' ? ' · ' + (lp && lp.live ? 'live Google Trends' : 'saved trends (no live feed yet)') + (Host.weather ? ' · weather for ' + Host.weather.place : ' · weather simulated') + (R.fps ? ' · ' + R.fps + ' fps' + (R.flat ? ' flat' : ' stacked') + (level ? ' (detail ' + level + ')' : '') + (R.fps < 20 ? ' · ' + window.innerWidth + 'x' + window.innerHeight + ' · ' + String(R.gl).replace(/ANGLE \(|Broadcom,? ?/g, '').slice(0, 26) : '') : '') : '');
+    $('foot').textContent = 'Next search pull in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + (lp ? ' · last pull kept ' + lp.n + ', skipped ' + lp.skipped + ' sports' : '') + (Host.mode === 'pi' ? ' · ' + (lp && lp.live ? 'live Google Trends' : 'saved trends (no live feed yet)') + (Host.weather ? ' · weather for ' + Host.weather.place : ' · weather simulated') + (R.fps ? ' · ' + R.fps + ' fps' + (R.flat ? ' flat' : ' stacked') + (level ? ' (detail ' + level + ')' : '') + (R.fps < 20 ? ' · work ' + Math.round(msSim) + '+' + Math.round(msDraw) + 'ms · ' + window.innerWidth + 'x' + window.innerHeight + ' · ' + String(R.gl).replace(/ANGLE \(|Broadcom,? ?/g, '').slice(0, 26) : '') : '') : '');
     if (Host.updated && Host.updated !== shownUpd) { shownUpd = Host.updated; const u = new Date(Host.updated), e = $('upd'); e.textContent = 'Last Update: ' + u.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' }) + ' ' + u.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).replace(' ', '').toLowerCase(); e.style.display = 'block'; }
     if (s.feed.length && s.feed[0].id !== lastFeed) { lastFeed = s.feed[0].id; drawFeed(s); }
     if (cardHit && $('card').style.display === 'block' && cardHit.person) showCard(cardHit);
@@ -230,18 +230,19 @@
       if (now - lastVer > 60000) { lastVer = now; Host.changed().then((yes) => { if (yes) { const p = persist(); (p && p.then ? p : Promise.resolve()).then(() => location.reload()); } }); }
     }
   }
+  let msSim = 0, msDraw = 0;
   function tick(now) {
     lastTick = now;
-    try { advance(now); } catch (e) { fail(e, 'world'); }
+    const t0 = performance.now(); try { advance(now); } catch (e) { fail(e, 'world'); } const t1 = performance.now(); msSim += (t1 - t0 - msSim) * 0.05;
     try {
       const s = Sim.S, catching = lastNeed > 90; note(R.error ? R.error : catching ? 'Catching up on ' + Math.round(lastNeed / 60) + ' minutes the world lived while you were away' : '');
-      if (now - lastDraw >= 1000 / fps - 3) { R.frame(s, Math.min(0.25, (now - lastDraw) / 1000), now); lastDraw = now; }
+      if (now - lastDraw >= 1000 / fps - 3) { R.frame(s, Math.min(0.25, (now - lastDraw) / 1000), now); lastDraw = now; msDraw += (performance.now() - t1 - msDraw) * 0.05; }
       if (now - lastUi > 250) { lastUi = now; ui(s, catching); }
     } catch (e) { fail(e, 'drawing'); }
     requestAnimationFrame(tick);
   }
   // On the Pi: if the picture cannot keep up, trade detail for smoothness, one step at a time. It never steps back up by itself.
-  const STEPS = [[{ noClouds: true }, { noClouds: false }], [{ scale: 0.5 }, { scale: 0.6667 }], [{ tipStride: 4 }, { tipStride: 2 }], [{ noWx: true }, { noWx: false }]];
+  const STEPS = [[{ noWx: true }, { noWx: false }], [{ scale: 0.5 }, { scale: 0.6667 }]];
   let level = 0, gi = 0, slow = 0, trial = null;
   setInterval(() => {
     if (!booted || Host.mode !== 'pi' || Host.cfg.governor === false || document.hidden || lastNeed > 90 || !R.fps) return;
